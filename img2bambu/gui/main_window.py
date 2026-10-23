@@ -12,8 +12,9 @@ from PySide6.QtWidgets import (
     QSpinBox, QSplitter, QTabWidget, QVBoxLayout, QWidget,
 )
 
-from .. import bambu, pipeline, segment
+from .. import bambu, pipeline, preview3d, segment
 from ..params import Params, hex_color
+from .view3d import View3D
 from .worker import Task
 
 IMG_FILTER = "Imagens (*.png *.jpg *.jpeg *.webp *.bmp)"
@@ -111,6 +112,9 @@ class MainWindow(QMainWindow):
         self.palette = None
         self.rows = []
         self.req = 0
+        # why: separate counter so 3D results never invalidate the 2D preview tagged with self.req
+        self.req3d = 0
+        self.dirty3d = False
         self.busy_export = False
         self.last_project = None
         self.db = None
@@ -123,6 +127,9 @@ class MainWindow(QMainWindow):
         self.view_orig, self.view_prev = ImageView(), ImageView()
         self.tabs.addTab(self.view_prev, "Cores (prévia)")
         self.tabs.addTab(self.view_orig, "Original")
+        self.view3d = View3D()
+        self.tabs.addTab(self.view3d, "3D")
+        self.tabs.currentChanged.connect(self.tab_changed)
         split.addWidget(self.tabs)
 
         side = QWidget(); sl = QVBoxLayout(side)
@@ -386,12 +393,39 @@ class MainWindow(QMainWindow):
         t.signals.done.connect(self.preview_done)
         t.signals.failed.connect(self.task_failed)
         self.pool.start(t)
+        if self.tabs.currentWidget() is self.view3d:
+            self.run_model()
+        else:
+            self.dirty3d = True
 
     def preview_done(self, tag, out):
         if tag != self.req:
             return
         self.view_prev.set_image(out[2])
         self.status("Prévia pronta. Ajuste as cores ou clique em Gerar 3MF.")
+
+    def tab_changed(self, i):
+        if self.tabs.widget(i) is self.view3d and self.dirty3d and self.analysis is not None:
+            self.run_model()
+
+    def run_model(self):
+        self.req3d += 1
+        self.dirty3d = False
+        t = Task(self.req3d, preview3d.build, self.analysis, copy.deepcopy(self.palette), self.read_params())
+        t.signals.done.connect(self.model_done)
+        t.signals.failed.connect(self.model_failed)
+        self.pool.start(t)
+
+    def model_done(self, tag, meshes):
+        if tag != self.req3d:
+            return
+        self.view3d.set_parts(meshes, reframe=False)
+
+    def model_failed(self, tag, msg):
+        if tag != self.req3d:
+            return
+        self.view3d.show_message(msg)
+        self.log_msg(f"Erro: {msg}")
 
     # ---------- export ----------
     def generate(self):
