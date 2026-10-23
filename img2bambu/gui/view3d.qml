@@ -42,4 +42,21 @@ Item {
     }
 
     OrbitCameraController { anchors.fill: parent; origin: orbit; camera: cam }
+
+    // why: stock controller pans only with Ctrl+left drag
+    DragHandler {
+        objectName: "pan"
+        target: null
+        acceptedButtons: Qt.MiddleButton | Qt.RightButton
+        property point last
+        onActiveChanged: last = centroid.position
+        onCentroidChanged: {
+            if (!active)
+                return
+            let dx = -(centroid.position.x - last.x) / root.width * cam.z
+            let dy = (centroid.position.y - last.y) / root.height * cam.z
+            orbit.position = orbit.position.plus(orbit.right.times(dx)).plus(orbit.up.times(dy))
+            last = centroid.position
+        }
+    }
 }

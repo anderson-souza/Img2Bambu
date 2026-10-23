@@ -1,5 +1,8 @@
 import pytest
+from PySide6.QtCore import QPoint, Qt
+from PySide6.QtGui import QVector3D
 from PySide6.QtQuick import QQuickWindow
+from PySide6.QtTest import QTest
 
 from img2bambu import preview3d, segment
 from img2bambu.gui import view3d
@@ -111,3 +114,53 @@ def test_bed_change_updates_warning_without_remesh(view, monkeypatch):
     assert "⚠" not in view.info_text()
     assert view.info_text() == "300.0 × 120.0 × 11.0 mm — 1 parte"
     assert _model_centre(view, big) == pytest.approx((175, 160))
+
+
+def _vec(v):
+    return v.x(), v.y(), v.z()
+
+
+def test_reframe_targets_model_centre(view, meshes):
+    view.set_bed(BED)
+    view.set_parts(meshes, reframe=True)
+    zc = (min(m.lo[2] for m in meshes) + max(m.hi[2] for m in meshes)) / 2
+    # model is centred on the bed (128, 128) in mm, Z up; scene is Y up with model Y towards -Z
+    assert _vec(view._node("orbit").property("position")) == pytest.approx((128, zc, -128), abs=1e-3)
+    assert view._node("camera").property("z") > 0
+
+
+def test_no_reframe_keeps_camera(view, meshes):
+    view.set_parts(meshes, reframe=True)
+    orbit, cam = view._node("orbit"), view._node("camera")
+    orbit.setProperty("position", QVector3D(5, 6, 7))
+    orbit.setProperty("eulerRotation", QVector3D(-10, 20, 0))
+    cam.setProperty("z", 123.0)
+    view.set_parts(meshes[:2], reframe=False)
+    assert _vec(orbit.property("position")) == pytest.approx((5, 6, 7))
+    assert _vec(orbit.property("eulerRotation")) == pytest.approx((-10, 20, 0))
+    assert cam.property("z") == pytest.approx(123.0)
+
+
+def test_larger_model_reframes_farther(view):
+    def box(w):
+        return [preview3d.MeshData("Base", (0, 0, 0), b"\0" * 72 * 4, (0, 0, 0), (w, w / 2, 11))]
+    view.set_parts(box(100), reframe=True)
+    near = view._node("camera").property("z")
+    view.set_parts(box(250), reframe=True)
+    assert view._node("camera").property("z") > near
+
+
+@pytest.mark.parametrize("button", [Qt.MiddleButton, Qt.RightButton])
+def test_middle_and_right_drag_pan(qapp, view, button):
+    pan = view._node("pan")
+    assert pan.property("acceptedButtons") == Qt.MiddleButton | Qt.RightButton
+    view.show()
+    orbit = view._node("orbit")
+    before = _vec(orbit.property("position"))
+    QTest.mousePress(view.quick, button, Qt.NoModifier, QPoint(200, 150))
+    for i in range(1, 8):
+        QTest.mouseMove(view.quick, QPoint(200 + 10 * i, 150 + 5 * i))
+        qapp.processEvents()
+    QTest.mouseRelease(view.quick, button, Qt.NoModifier, QPoint(270, 185))
+    after = _vec(orbit.property("position"))
+    assert after[0] < before[0] and after[1] > before[1]
