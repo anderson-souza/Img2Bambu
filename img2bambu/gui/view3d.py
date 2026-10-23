@@ -97,6 +97,7 @@ class View3D(QWidget):
         self.bed = bed
         if not self.ok:
             return
+        old = self._node("model").property("position")
         node = self._node("bed")
         node.setProperty("visible", bed is not None)
         if bed is not None:
@@ -105,6 +106,10 @@ class View3D(QWidget):
             node.setProperty("scale", QVector3D((x1 - x0) / 100, (y1 - y0) / 100, 1))
             node.setProperty("position", QVector3D((x0 + x1) / 2, (y0 + y1) / 2, -0.01))
         self._place()
+        # why: the orbit origin follows the model so a printer change does not push it off-screen
+        d = self._node("model").property("position") - old
+        orbit = self._node("orbit")
+        orbit.setProperty("position", orbit.property("position") + QVector3D(d.x(), d.z(), -d.y()))
 
     def show_message(self, text):
         if not self.ok:

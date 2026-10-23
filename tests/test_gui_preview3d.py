@@ -4,6 +4,7 @@ import time
 import pytest
 
 from img2bambu import bambu, preview3d
+from img2bambu.gui import main_window
 from img2bambu.gui.main_window import MainWindow
 from test_core import synthetic
 
@@ -148,3 +149,69 @@ def test_build_failure_shows_message(qapp, win, calls, monkeypatch):
     assert win.view3d.info_text() == "Silhueta vazia"
     assert "Erro: Silhueta vazia" in win.log.toPlainText()
     assert win.bt_gen.isEnabled()
+
+
+def _frame(view):
+    o = view._node("orbit").property("position")
+    return o.x(), o.y(), o.z()
+
+
+def test_new_image_reframes_once(qapp, win, monkeypatch, tmp_path):
+    from PIL import Image
+    from PySide6.QtCore import QSettings
+    from PySide6.QtGui import QVector3D
+    img = tmp_path / "a.png"
+    Image.fromarray(synthetic()).save(img)
+    win.settings = QSettings(str(tmp_path / "s.ini"), QSettings.IniFormat)
+    monkeypatch.setattr(main_window.QFileDialog, "getOpenFileName", lambda *a, **k: (str(img), ""))
+    seen, real = [], win.view3d.set_parts
+    monkeypatch.setattr(win.view3d, "set_parts", lambda m, reframe: (seen.append(reframe), real(m, reframe)))
+    win.tabs.setCurrentWidget(win.view3d)
+    win.open_image()
+    settle(qapp, win)
+    assert seen == [True]
+    framed = _frame(win.view3d)
+    assert (framed[0], framed[2]) == pytest.approx((128, -128), abs=1)   # M1 bed centre
+    win.view3d._node("orbit").setProperty("position", QVector3D(5, 6, 7))
+    win.sp_relief.setValue(2.0)
+    settle(qapp, win)
+    assert seen == [True, False]
+    assert _frame(win.view3d) == pytest.approx((5, 6, 7))
+    win.open_image()
+    settle(qapp, win)
+    assert seen[-1] is True
+    # relief is now 2.0: origin back at the model centre, height (base 10 + relief 2) / 2
+    assert _frame(win.view3d) == pytest.approx((framed[0], 6.0, framed[2]), abs=1e-3)
+
+
+def test_machine_change_updates_bed_without_rebuild(qapp, win, calls, monkeypatch):
+    load(qapp, win)
+    win.tabs.setCurrentWidget(win.view3d)
+    settle(qapp, win)
+    assert win.cb_machine.currentText() == "M1"
+    assert win.view3d.info_text() == preview3d.describe(win.view3d.meshes, (0, 0, 256, 256, 256.0))
+    beds, real = [], win.view3d.set_bed
+    monkeypatch.setattr(win.view3d, "set_bed", lambda b: (beds.append(b), real(b)))
+    win.cb_machine.setCurrentText("M2")
+    settle(qapp, win)
+    assert beds == [(0, 0, 350, 320, 325.0)]
+    assert len(calls) == 1
+    assert win.view3d._node("bed").property("visible") is True
+    assert win.view3d.info_text() == preview3d.describe(win.view3d.meshes, (0, 0, 350, 320, 325.0))
+
+
+def test_no_presets_shows_bed_unavailable(qapp, monkeypatch, tmp_path, calls):
+    monkeypatch.setattr(bambu, "PresetDB", lambda: RealDB(root=str(tmp_path)))
+    w = MainWindow()
+    beds, real = [], w.view3d.set_bed
+    monkeypatch.setattr(w.view3d, "set_bed", lambda b: (beds.append(b), real(b)))
+    settle(qapp, w)
+    assert w.db.ok is False
+    assert beds == [None]
+    load(qapp, w)
+    w.tabs.setCurrentWidget(w.view3d)
+    settle(qapp, w)
+    assert w.view3d.part_count() == 3
+    assert "Mesa indisponível" in w.view3d.info_text()
+    w.close()
+    w.deleteLater()

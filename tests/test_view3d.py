@@ -164,3 +164,15 @@ def test_middle_and_right_drag_pan(qapp, view, button):
     QTest.mouseRelease(view.quick, button, Qt.NoModifier, QPoint(270, 185))
     after = _vec(orbit.property("position"))
     assert after[0] < before[0] and after[1] > before[1]
+
+
+def test_bed_change_moves_orbit_with_model(view, meshes):
+    view.set_bed(BED)
+    view.set_parts(meshes, reframe=True)
+    model, orbit = view._node("model"), view._node("orbit")
+    m0, o0 = _vec(model.property("position")), _vec(orbit.property("position"))
+    view.set_bed((0, 0, 350, 320, 325.0))
+    m1, o1 = _vec(model.property("position")), _vec(orbit.property("position"))
+    assert (m1[0] - m0[0], m1[1] - m0[1]) == pytest.approx((47, 32))
+    # invariant: model (x, y) maps to scene (x, -z) under the container's -90° X rotation
+    assert (o1[0] - o0[0], o1[1] - o0[1], o1[2] - o0[2]) == pytest.approx((47, 0, -32))

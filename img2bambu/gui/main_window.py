@@ -115,6 +115,7 @@ class MainWindow(QMainWindow):
         # why: separate counter so 3D results never invalidate the 2D preview tagged with self.req
         self.req3d = 0
         self.dirty3d = False
+        self.reframe3d = False
         self.busy_export = False
         self.last_project = None
         self.db = None
@@ -252,6 +253,7 @@ class MainWindow(QMainWindow):
         self.db = bambu.PresetDB()
         if not self.db.ok:
             self.log_msg("Presets do Bambu Studio não encontrados: só STLs serão gerados.")
+            self.view3d.set_bed(None)
             return
         self.cb_machine.blockSignals(True)
         self.cb_machine.addItems(self.db.machines())
@@ -264,6 +266,7 @@ class MainWindow(QMainWindow):
     def machine_changed(self, machine, restore=False):
         if not self.db or not machine:
             return
+        self.view3d.set_bed(self.db.bed(machine))
         proc_def, fil_def = self.db.defaults(machine)
         for cb, items, default, key in (
             (self.cb_process, self.db.processes(machine), proc_def, "process"),
@@ -291,6 +294,7 @@ class MainWindow(QMainWindow):
         self.lbl_file.setText(os.path.basename(path))
         self.view_orig.set_image(self.rgba, refit=True)
         self.view_prev._fitted = False
+        self.reframe3d = True
         self.ed_out.setText(os.path.join(os.path.dirname(path), "img2bambu_saida"))
         self.ed_name.setText(os.path.splitext(os.path.basename(path))[0])
         self.reanalyze()
@@ -419,7 +423,8 @@ class MainWindow(QMainWindow):
     def model_done(self, tag, meshes):
         if tag != self.req3d:
             return
-        self.view3d.set_parts(meshes, reframe=False)
+        self.view3d.set_parts(meshes, reframe=self.reframe3d)
+        self.reframe3d = False
 
     def model_failed(self, tag, msg):
         if tag != self.req3d:
