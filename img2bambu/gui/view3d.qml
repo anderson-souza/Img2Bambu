@@ -21,6 +21,12 @@ Item {
         // why: meshes are Z-up mm like the export; Qt Quick 3D is Y-up
         Node {
             eulerRotation.x: -90
+            Model {
+                objectName: "bed"
+                source: "#Rectangle"
+                visible: false
+                materials: PrincipledMaterial { baseColor: "#bdbdbd"; roughness: 0.9 }
+            }
             Node {
                 objectName: "model"
                 Repeater3D {

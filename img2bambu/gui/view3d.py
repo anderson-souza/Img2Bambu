@@ -55,6 +55,22 @@ class View3D(QWidget):
     def _root(self):
         return self.quick.rootObject()
 
+    def _node(self, name):
+        return self._root().findChild(QObject, name)
+
+    def _place(self):
+        """Centre the model's bbox on the bed centre (origin without bed), like the export does."""
+        tx = ty = 0.0
+        if self.bed is not None:
+            x0, y0, x1, y1, _ = self.bed
+            tx, ty = (x0 + x1) / 2, (y0 + y1) / 2
+        if self.meshes:
+            lo = [min(m.lo[i] for m in self.meshes) for i in range(2)]
+            hi = [max(m.hi[i] for m in self.meshes) for i in range(2)]
+            self._node("model").setProperty(
+                "position", QVector3D(tx - (lo[0] + hi[0]) / 2, ty - (lo[1] + hi[1]) / 2, 0))
+            self.info.setText(preview3d.describe(self.meshes, self.bed))
+
     def set_parts(self, meshes, reframe):
         if not self.ok:
             return
@@ -62,7 +78,20 @@ class View3D(QWidget):
         self.geos = [MeshGeometry(m) for m in self.meshes]
         self._root().setProperty("parts", [{"geometry": g, "color": QColor(*m.color)}
                                            for g, m in zip(self.geos, self.meshes)])
-        self.info.setText(preview3d.describe(self.meshes, self.bed))
+        self._place()
+
+    def set_bed(self, bed):
+        self.bed = bed
+        if not self.ok:
+            return
+        node = self._node("bed")
+        node.setProperty("visible", bed is not None)
+        if bed is not None:
+            x0, y0, x1, y1, _ = bed
+            # invariant: #Rectangle is 100×100 units centred on its origin; z just below the base avoids z-fighting
+            node.setProperty("scale", QVector3D((x1 - x0) / 100, (y1 - y0) / 100, 1))
+            node.setProperty("position", QVector3D((x0 + x1) / 2, (y0 + y1) / 2, -0.01))
+        self._place()
 
     def show_message(self, text):
         if not self.ok:
