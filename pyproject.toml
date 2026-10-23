@@ -1,0 +1,9 @@
+[project]
+name = "img2bambu"
+version = "0.1.0"
+description = "Imagem PNG -> projeto 3MF multicor (base + relevo) para Bambu Studio"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: needs Bambu Studio installed (slices via CLI)"]

@@ -1,0 +1,482 @@
+import copy
+import os
+import subprocess
+
+import numpy as np
+from PySide6.QtCore import Qt, QSettings, QThreadPool, QTimer
+from PySide6.QtGui import QColor, QImage, QPixmap, QPainter
+from PySide6.QtWidgets import (
+    QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
+    QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
+    QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QRadioButton, QScrollArea,
+    QSpinBox, QSplitter, QTabWidget, QVBoxLayout, QWidget,
+)
+
+from .. import bambu, pipeline, segment
+from ..params import Params, hex_color
+from .worker import Task
+
+IMG_FILTER = "Imagens (*.png *.jpg *.jpeg *.webp *.bmp)"
+
+
+def to_pixmap(arr):
+    arr = np.ascontiguousarray(arr)
+    h, w = arr.shape[:2]
+    fmt = QImage.Format_RGBA8888 if arr.shape[2] == 4 else QImage.Format_RGB888
+    return QPixmap.fromImage(QImage(arr.data, w, h, arr.strides[0], fmt).copy())
+
+
+class ImageView(QGraphicsView):
+    def __init__(self):
+        super().__init__()
+        self.setScene(QGraphicsScene(self))
+        self.item = QGraphicsPixmapItem()
+        self.scene().addItem(self.item)
+        self.setRenderHint(QPainter.SmoothPixmapTransform)
+        self.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setBackgroundBrush(QColor("#d0d0d0"))
+        self._fitted = False
+
+    def set_image(self, arr, refit=False):
+        self.item.setPixmap(to_pixmap(arr))
+        self.scene().setSceneRect(self.item.boundingRect())
+        if refit or not self._fitted:
+            self.fitInView(self.item, Qt.KeepAspectRatio)
+            self._fitted = True
+
+    def wheelEvent(self, e):
+        f = 1.2 if e.angleDelta().y() > 0 else 1 / 1.2
+        self.scale(f, f)
+
+    def mouseDoubleClickEvent(self, e):
+        self.fitInView(self.item, Qt.KeepAspectRatio)
+
+
+class ColorRow(QWidget):
+    def __init__(self, win, idx):
+        super().__init__()
+        self.win, self.idx = win, idx
+        lay = QHBoxLayout(self); lay.setContentsMargins(0, 0, 0, 0)
+        self.swatch = QPushButton(); self.swatch.setFixedSize(42, 24)
+        self.swatch.setToolTip("Cor do filamento (clique para alterar)")
+        self.swatch.clicked.connect(self.pick)
+        self.base = QRadioButton("Base")
+        self.base.setToolTip("Cor da base de trás (silhueta inteira)")
+        self.streak = QCheckBox("Filtro reflexo")
+        self.streak.setToolTip("Remove listras finas desta cor (reflexos de brilho)")
+        self.merge = QComboBox(); self.merge.setToolTip("Mesclar esta cor em outra")
+        self.pct = QLabel()
+        for w in (self.swatch, self.base, self.streak, self.merge, self.pct):
+            lay.addWidget(w)
+        lay.addStretch()
+
+    def refresh(self):
+        pal = self.win.palette
+        c = pal.colors[self.idx]
+        self.swatch.setStyleSheet(f"background:{hex_color(c)}; border:1px solid #555;")
+        self.swatch.setText("")
+        self.base.setChecked(pal.base_index == self.idx)
+        self.streak.blockSignals(True); self.streak.setChecked(self.idx in pal.streak); self.streak.blockSignals(False)
+        self.merge.blockSignals(True)
+        self.merge.clear(); self.merge.addItem("—", -1)
+        for j, cj in enumerate(pal.colors):
+            if j != self.idx:
+                self.merge.addItem(f"→ {hex_color(cj)}", j)
+        target = pal.merges.get(self.idx, -1)
+        self.merge.setCurrentIndex(max(0, self.merge.findData(target)))
+        self.merge.blockSignals(False)
+        merged = pal.resolve(self.idx) != self.idx
+        for w in (self.base, self.streak):
+            w.setEnabled(not merged)
+
+    def pick(self):
+        c = QColorDialog.getColor(QColor(*self.win.palette.colors[self.idx]), self, "Cor do filamento")
+        if c.isValid():
+            self.win.palette.colors[self.idx] = (c.red(), c.green(), c.blue())
+            self.win.palette_changed()
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Img2Bambu — imagem para 3MF multicor")
+        self.resize(1300, 820)
+        self.settings = QSettings("img2bambu", "img2bambu")
+        self.pool = QThreadPool.globalInstance()
+        self.params = Params()
+        self.image_path = None
+        self.rgba = None
+        self.analysis = None
+        self.palette = None
+        self.rows = []
+        self.req = 0
+        self.busy_export = False
+        self.last_project = None
+        self.db = None
+
+        self.debounce = QTimer(self, singleShot=True, interval=350)
+        self.debounce.timeout.connect(self.run_preview)
+
+        split = QSplitter()
+        self.tabs = QTabWidget()
+        self.view_orig, self.view_prev = ImageView(), ImageView()
+        self.tabs.addTab(self.view_prev, "Cores (prévia)")
+        self.tabs.addTab(self.view_orig, "Original")
+        split.addWidget(self.tabs)
+
+        side = QWidget(); sl = QVBoxLayout(side)
+        sl.addWidget(self._group_image())
+        sl.addWidget(self._group_colors())
+        sl.addWidget(self._group_dims())
+        sl.addWidget(self._group_bambu())
+        sl.addWidget(self._group_output())
+        sl.addStretch()
+        scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setWidget(side)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setMinimumWidth(470)
+        split.addWidget(scroll)
+        split.setStretchFactor(0, 3); split.setStretchFactor(1, 2)
+        self.setCentralWidget(split)
+        self.statusBar().showMessage("Abra uma imagem para começar.")
+        QTimer.singleShot(0, self.load_presets)
+
+    # ---------- UI groups ----------
+    def _group_image(self):
+        g = QGroupBox("1. Imagem"); f = QFormLayout(g)
+        row = QHBoxLayout()
+        b = QPushButton("Abrir imagem…"); b.clicked.connect(self.open_image)
+        self.lbl_file = QLabel("—"); self.lbl_file.setWordWrap(True)
+        row.addWidget(b); row.addWidget(self.lbl_file, 1)
+        f.addRow(row)
+        self.cb_bg = QComboBox()
+        self.cb_bg.addItem("Transparência (PNG com fundo transparente)", "alpha")
+        self.cb_bg.addItem("Remover cor de fundo (a partir dos cantos)", "color")
+        self.cb_bg.currentIndexChanged.connect(self.reanalyze)
+        f.addRow("Fundo:", self.cb_bg)
+        self.sp_tol = QSpinBox(); self.sp_tol.setRange(1, 120); self.sp_tol.setValue(self.params.bg_tolerance)
+        self.sp_tol.valueChanged.connect(self.reanalyze)
+        f.addRow("Tolerância do fundo:", self.sp_tol)
+        return g
+
+    def _group_colors(self):
+        g = QGroupBox("2. Cores"); v = QVBoxLayout(g)
+        f = QFormLayout()
+        self.sp_n = QSpinBox(); self.sp_n.setRange(2, 8); self.sp_n.setValue(self.params.n_colors)
+        self.sp_n.setToolTip("Quantidade de cores detectadas automaticamente (AMS = 4 slots)")
+        self.sp_n.valueChanged.connect(self.reanalyze)
+        f.addRow("Nº de cores:", self.sp_n)
+        self.sp_detail = self._dspin(0.1, 3.0, self.params.min_detail_mm, 0.1, " mm")
+        self.sp_detail.setToolTip("Detalhes menores que isso são removidos (bico 0.4 → ~0.5 mm)")
+        f.addRow("Detalhe mínimo:", self.sp_detail)
+        self.sp_streak = self._dspin(0.0, 3.0, self.params.streak_radius_mm, 0.1, " mm")
+        self.sp_streak.setToolTip("Raio mínimo de áreas mantidas nas cores com 'Filtro reflexo'")
+        f.addRow("Filtro reflexo (raio):", self.sp_streak)
+        v.addLayout(f)
+        self.rows_box = QVBoxLayout(); v.addLayout(self.rows_box)
+        self.base_group = QButtonGroup(self)
+        self.base_group.idClicked.connect(self.set_base)
+        self.lbl_colors = QLabel(""); self.lbl_colors.setWordWrap(True)
+        v.addWidget(self.lbl_colors)
+        return g
+
+    def _group_dims(self):
+        g = QGroupBox("3. Dimensões"); f = QFormLayout(g)
+        self.sp_w = self._dspin(10, 500, self.params.width_mm, 5, " mm")
+        f.addRow("Largura:", self.sp_w)
+        self.lbl_h = QLabel("—"); f.addRow("Altura (proporcional):", self.lbl_h)
+        self.sp_base = self._dspin(1, 50, self.params.base_mm, 0.5, " mm")
+        f.addRow("Espessura da base:", self.sp_base)
+        self.sp_relief = self._dspin(0.2, 10, self.params.relief_mm, 0.2, " mm")
+        f.addRow("Relevo das cores:", self.sp_relief)
+        return g
+
+    def _group_bambu(self):
+        g = QGroupBox("4. Bambu Studio"); f = QFormLayout(g)
+        row = QHBoxLayout()
+        self.ed_exe = QLineEdit(self.settings.value("exe", "") or (bambu.find_exe() or ""))
+        b = QPushButton("…"); b.setFixedWidth(30); b.clicked.connect(self.browse_exe)
+        row.addWidget(self.ed_exe); row.addWidget(b)
+        f.addRow("Executável:", row)
+        self.cb_machine, self.cb_process, self.cb_filament = QComboBox(), QComboBox(), QComboBox()
+        for cb in (self.cb_machine, self.cb_process, self.cb_filament):
+            cb.setMaxVisibleItems(25)
+            cb.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            cb.setMinimumContentsLength(18)
+        self.cb_machine.currentTextChanged.connect(self.machine_changed)
+        f.addRow("Impressora:", self.cb_machine)
+        f.addRow("Processo:", self.cb_process)
+        f.addRow("Filamento:", self.cb_filament)
+        self.ck_check = QCheckBox("Verificar fatiando após gerar (+~20 s)")
+        self.ck_check.setChecked(self.settings.value("check", "true") == "true")
+        f.addRow(self.ck_check)
+        return g
+
+    def _group_output(self):
+        g = QGroupBox("5. Gerar"); v = QVBoxLayout(g)
+        f = QFormLayout()
+        row = QHBoxLayout()
+        self.ed_out = QLineEdit(); b = QPushButton("…"); b.setFixedWidth(30); b.clicked.connect(self.browse_out)
+        row.addWidget(self.ed_out); row.addWidget(b)
+        f.addRow("Pasta de saída:", row)
+        self.ed_name = QLineEdit(); f.addRow("Nome do arquivo:", self.ed_name)
+        v.addLayout(f)
+        row = QHBoxLayout()
+        self.bt_gen = QPushButton("Gerar 3MF"); self.bt_gen.setMinimumHeight(34)
+        self.bt_gen.setStyleSheet("font-weight:bold;")
+        self.bt_gen.clicked.connect(self.generate)
+        self.bt_open = QPushButton("Abrir no Bambu Studio"); self.bt_open.clicked.connect(self.open_bambu)
+        self.bt_dir = QPushButton("Abrir pasta"); self.bt_dir.clicked.connect(self.open_dir)
+        self.bt_open.setEnabled(False)
+        for b in (self.bt_gen, self.bt_open, self.bt_dir):
+            row.addWidget(b)
+        v.addLayout(row)
+        self.progress = QProgressBar(); self.progress.setValue(0); v.addWidget(self.progress)
+        self.log = QPlainTextEdit(readOnly=True); self.log.setMaximumHeight(140); v.addWidget(self.log)
+        return g
+
+    def _dspin(self, lo, hi, val, step, suffix):
+        s = QDoubleSpinBox(); s.setRange(lo, hi); s.setValue(val); s.setSingleStep(step); s.setSuffix(suffix)
+        s.setDecimals(2); s.valueChanged.connect(self.params_changed)
+        return s
+
+    # ---------- presets ----------
+    def load_presets(self):
+        self.db = bambu.PresetDB()
+        if not self.db.ok:
+            self.log_msg("Presets do Bambu Studio não encontrados: só STLs serão gerados.")
+            return
+        self.cb_machine.blockSignals(True)
+        self.cb_machine.addItems(self.db.machines())
+        self.cb_machine.blockSignals(False)
+        m = self.settings.value("machine", "Bambu Lab A1 0.4 nozzle")
+        i = self.cb_machine.findText(m)
+        self.cb_machine.setCurrentIndex(i if i >= 0 else 0)
+        self.machine_changed(self.cb_machine.currentText(), restore=True)
+
+    def machine_changed(self, machine, restore=False):
+        if not self.db or not machine:
+            return
+        proc_def, fil_def = self.db.defaults(machine)
+        for cb, items, default, key in (
+            (self.cb_process, self.db.processes(machine), proc_def, "process"),
+            (self.cb_filament, self.db.filaments(machine), fil_def, "filament"),
+        ):
+            cb.clear(); cb.addItems(items)
+            want = self.settings.value(key) if restore else None
+            i = cb.findText(want) if want else -1
+            if i < 0:
+                i = cb.findText(default or "")
+            cb.setCurrentIndex(max(i, 0))
+
+    # ---------- image / analysis ----------
+    def open_image(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Abrir imagem", self.settings.value("dir", ""), IMG_FILTER)
+        if not path:
+            return
+        self.settings.setValue("dir", os.path.dirname(path))
+        try:
+            self.rgba = segment.load_image(path)
+        except Exception as e:  # noqa: BLE001 — why: any decode error is shown to the user
+            QMessageBox.critical(self, "Erro", f"Não foi possível abrir a imagem:\n{e}")
+            return
+        self.image_path = path
+        self.lbl_file.setText(os.path.basename(path))
+        self.view_orig.set_image(self.rgba, refit=True)
+        self.view_prev._fitted = False
+        self.ed_out.setText(os.path.join(os.path.dirname(path), "img2bambu_saida"))
+        self.ed_name.setText(os.path.splitext(os.path.basename(path))[0])
+        self.reanalyze()
+
+    def read_params(self):
+        p = self.params
+        p.background = self.cb_bg.currentData()
+        p.bg_tolerance = self.sp_tol.value()
+        p.n_colors = self.sp_n.value()
+        p.min_detail_mm = self.sp_detail.value()
+        p.streak_radius_mm = self.sp_streak.value()
+        p.width_mm = self.sp_w.value()
+        p.base_mm = self.sp_base.value()
+        p.relief_mm = self.sp_relief.value()
+        return copy.deepcopy(p)
+
+    def reanalyze(self):
+        if self.rgba is None:
+            return
+        self.req += 1
+        self.status("Detectando cores…")
+        t = Task(self.req, segment.analyze, self.rgba, self.read_params())
+        t.signals.done.connect(self.analysis_done)
+        t.signals.failed.connect(self.task_failed)
+        self.pool.start(t)
+
+    def analysis_done(self, tag, an):
+        if tag != self.req:
+            return
+        self.analysis, self.palette = an, an.palette
+        if an.note:
+            self.log_msg(an.note)
+        self.build_rows()
+        self.run_preview()
+
+    def build_rows(self):
+        for r in self.rows:
+            self.base_group.removeButton(r.base)
+            r.setParent(None)
+        self.rows = []
+        for i in range(len(self.palette.colors)):
+            r = ColorRow(self, i)
+            self.base_group.addButton(r.base, i)
+            r.streak.toggled.connect(lambda on, i=i: self.set_streak(i, on))
+            r.merge.currentIndexChanged.connect(lambda _, i=i: self.set_merge(i))
+            self.rows_box.addWidget(r)
+            self.rows.append(r)
+        self.refresh_rows()
+
+    def refresh_rows(self):
+        lab = self.analysis.labels
+        tot = max(1, int((lab >= 0).sum()))
+        counts = np.bincount(lab[lab >= 0], minlength=len(self.palette.colors))
+        for r in self.rows:
+            r.refresh()
+            r.pct.setText(f"{100 * counts[r.idx] / tot:.0f}%")
+        n = len(self.palette.active())
+        warn = "  ⚠ mais que 4 cores = mais que um AMS." if n > 4 else ""
+        self.lbl_colors.setText(f"{n} filamento(s) no projeto.{warn}")
+
+    def set_base(self, i):
+        self.palette.base_index = i
+        self.palette_changed()
+
+    def set_streak(self, i, on):
+        (self.palette.streak.add if on else self.palette.streak.discard)(i)
+        self.palette_changed()
+
+    def set_merge(self, i):
+        target = self.rows[i].merge.currentData()
+        if target is None or target < 0:
+            self.palette.merges.pop(i, None)
+        else:
+            self.palette.merges[i] = target
+            if self.palette.resolve(target) == i:      # why: merging into own descendant would form a cycle
+                self.palette.merges.pop(i)
+                QMessageBox.warning(self, "Mesclar", "Essa combinação criaria um ciclo de mesclagem.")
+        if self.palette.resolve(self.palette.base_index) != self.palette.base_index:
+            self.palette.base_index = self.palette.resolve(self.palette.base_index)
+        self.palette_changed()
+
+    def palette_changed(self):
+        self.refresh_rows()
+        self.debounce.start()
+
+    def params_changed(self):
+        if self.analysis is not None:
+            h, w = self.analysis.sil.shape
+            self.lbl_h.setText(f"{self.sp_w.value() * h / w:.1f} mm")
+            self.debounce.start()
+
+    def run_preview(self):
+        if self.analysis is None:
+            return
+        self.req += 1
+        self.status("Atualizando prévia…")
+        h, w = self.analysis.sil.shape
+        self.lbl_h.setText(f"{self.sp_w.value() * h / w:.1f} mm")
+        t = Task(self.req, pipeline.render, self.analysis, copy.deepcopy(self.palette), self.read_params())
+        t.signals.done.connect(self.preview_done)
+        t.signals.failed.connect(self.task_failed)
+        self.pool.start(t)
+
+    def preview_done(self, tag, out):
+        if tag != self.req:
+            return
+        self.view_prev.set_image(out[2])
+        self.status("Prévia pronta. Ajuste as cores ou clique em Gerar 3MF.")
+
+    # ---------- export ----------
+    def generate(self):
+        if self.analysis is None:
+            QMessageBox.information(self, "Img2Bambu", "Abra uma imagem primeiro.")
+            return
+        if self.busy_export:
+            return
+        outdir, name = self.ed_out.text().strip(), self.ed_name.text().strip()
+        if not outdir or not name:
+            QMessageBox.warning(self, "Img2Bambu", "Defina pasta de saída e nome do arquivo.")
+            return
+        exe = self.ed_exe.text().strip()
+        choice = None
+        if exe and os.path.isfile(exe) and self.db and self.db.ok and self.cb_process.currentText() \
+                and self.cb_filament.currentText():
+            choice = pipeline.BambuChoice(exe, self.cb_machine.currentText(), self.cb_process.currentText(),
+                                          self.cb_filament.currentText(), self.ck_check.isChecked())
+        for k, v in (("exe", exe), ("machine", self.cb_machine.currentText()),
+                     ("process", self.cb_process.currentText()), ("filament", self.cb_filament.currentText()),
+                     ("check", "true" if self.ck_check.isChecked() else "false")):
+            self.settings.setValue(k, v)
+        self.busy_export = True
+        self.bt_gen.setEnabled(False)
+        self.progress.setValue(0)
+        self.log_msg(f"Gerando '{name}'…")
+        t = Task(0, pipeline.export, self.analysis, copy.deepcopy(self.palette), self.read_params(),
+                 outdir, name, choice, self.db, with_progress=True)
+        t.signals.progress.connect(lambda p, m: (self.progress.setValue(p), self.status(m)))
+        t.signals.done.connect(self.export_done)
+        t.signals.failed.connect(self.export_failed)
+        self.pool.start(t)
+
+    def export_done(self, _tag, res):
+        self.busy_export = False
+        self.bt_gen.setEnabled(True)
+        for s in res.stls:
+            self.log_msg(f"STL: {s}")
+        if res.project:
+            self.last_project = res.project
+            self.bt_open.setEnabled(True)
+            self.log_msg(f"Projeto: {res.project}")
+        if res.check:
+            c = res.check
+            self.log_msg(f"Verificação: {c.get('changes')} trocas de filamento, cores {', '.join(c.get('colours', []))}, "
+                         f"tempo estimado {c.get('time') or '?'}.")
+        for w in res.warnings:
+            self.log_msg(f"⚠ {w}")
+        self.status("Concluído.")
+
+    def export_failed(self, _tag, msg):
+        self.busy_export = False
+        self.bt_gen.setEnabled(True)
+        self.progress.setValue(0)
+        self.log_msg(f"Erro: {msg}")
+        QMessageBox.critical(self, "Erro ao gerar", msg)
+
+    def task_failed(self, tag, msg):
+        if tag == self.req:
+            self.log_msg(f"Erro: {msg}")
+            self.status("Erro.")
+
+    # ---------- misc ----------
+    def browse_exe(self):
+        p, _ = QFileDialog.getOpenFileName(self, "bambu-studio.exe", self.ed_exe.text(), "Executável (*.exe)")
+        if p:
+            self.ed_exe.setText(p)
+
+    def browse_out(self):
+        p = QFileDialog.getExistingDirectory(self, "Pasta de saída", self.ed_out.text())
+        if p:
+            self.ed_out.setText(p)
+
+    def open_bambu(self):
+        exe = self.ed_exe.text().strip()
+        if self.last_project and os.path.isfile(exe):
+            subprocess.Popen([exe, self.last_project])
+
+    def open_dir(self):
+        d = self.ed_out.text().strip()
+        if d and os.path.isdir(d):
+            os.startfile(d)
+
+    def status(self, msg):
+        self.statusBar().showMessage(msg)
+
+    def log_msg(self, msg):
+        self.log.appendPlainText(msg)

@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/
+
+# PyInstaller (img2bambu.spec is versioned)
+build/
+dist/
+
+# Local tooling state
+.tlc/
+
+# Generated output
+*.stl
+*.3mf
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
