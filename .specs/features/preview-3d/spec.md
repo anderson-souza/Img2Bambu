@@ -36,6 +36,7 @@ Hoje o usuário só vê uma prévia 2D das cores (`segment.preview`). Espessura 
 | Cores na vista | Cor de cada `Part.color` (RGB da paleta), iluminação simples para leitura de relevo | Parte i = filamento i | n |
 | Câmera ao atualizar | Mantém posição em ajustes de parâmetros; reenquadra ao abrir nova imagem | Usuário não perde o ângulo que está inspecionando | n |
 | Mesa sem presets | Se `PresetDB` indisponível ou impressora sem `printable_area`: não desenha mesa, mostra "Mesa indisponível" | Presets são opcionais no app (modo só STL) | n |
+| Modelo vazio | N/A: `build_parts` lança `ValueError` ("Silhueta vazia após limpeza.") antes de existir modelo vazio; tratado por P1 AC9 | Caminho inalcançável; registrado pelo Verifier (L-003) | y |
 | Posição do modelo na mesa | Centro do bbox no centro de `printable_area` (mesma lógica de `PresetDB.bed_center`) | Coincide com posicionamento do export | n |
 | "Cabe na mesa" | Compara bbox XYZ do modelo com bbox de `printable_area` + `printable_height`; Z ignorado se campo ausente | `printable_height` confirmado no Design (A1 = 256) | y |
 | OpenGL indisponível | Aba 3D mostra mensagem de erro; resto do app funciona igual | Falha visível, sem quebrar fluxo de export | n |
@@ -81,7 +82,7 @@ Hoje o usuário só vê uma prévia 2D das cores (`segment.preview`). Espessura 
 1. WHEN modelo 3D exibido THEN aba SHALL mostrar texto "X × Y × Z mm" do bbox combinado de todas as partes (1 casa decimal) e nº de partes.
 2. WHEN modelo recalculado THEN texto SHALL refletir o novo bbox.
 
-**Independent Test**: Largura 150 mm, base 10, relevo 1 → texto mostra X = 150.0 (±`simplify_mm`) e Z = 11.0.
+**Independent Test**: Largura 150 mm, base 10, relevo 1 → texto mostra X = 150.0 (± `simplify_mm` + 1 pixel upsampled, perda inerente de `to_polys` igual ao export) e Z = 11.0.
 
 ---
 
@@ -93,7 +94,7 @@ Hoje o usuário só vê uma prévia 2D das cores (`segment.preview`). Espessura 
 
 **Acceptance Criteria**:
 
-1. WHEN presets carregados e impressora selecionada tem `printable_area` THEN vista SHALL desenhar o contorno da mesa em z=0 com modelo centrado nela.
+1. WHEN presets carregados e impressora selecionada tem `printable_area` THEN vista SHALL desenhar a mesa (plano retangular do tamanho da `printable_area`, logo abaixo de z=0) com modelo centrado nela.
 2. WHEN usuário troca impressora THEN mesa SHALL ser redesenhada com a nova área (sem recalcular malhas).
 3. WHEN bbox X, Y ou Z do modelo excede largura/profundidade da `printable_area` ou `printable_height` THEN aba SHALL mostrar aviso "⚠ Modelo maior que a mesa (W × D × H mm)."; WHEN `printable_height` ausente THEN Z SHALL ser ignorado e aviso SHALL mostrar "(W × D mm)".
 4. WHEN presets indisponíveis ou sem `printable_area` THEN vista SHALL omitir mesa e mostrar "Mesa indisponível"; modelo continua exibido.
@@ -131,15 +132,15 @@ Hoje o usuário só vê uma prévia 2D das cores (`segment.preview`). Espessura 
 
 | Requirement ID | Story | Phase | Status |
 | -------------- | ----- | ----- | ------ |
-| PREV3D-01 | P1: geometria = `build_parts` (AC1, AC2) | Design | Pending |
-| PREV3D-02 | P1: auto-update só com aba visível (AC3, AC4) | Design | Pending |
-| PREV3D-03 | P1: descarte de resultado obsoleto (AC5) | Design | Pending |
-| PREV3D-04 | P1: câmera orbit/zoom/pan + reenquadrar (AC6, AC7) | Design | Pending |
-| PREV3D-05 | P1: estados vazio/erro (AC8, AC9, edge OpenGL) | Design | Pending |
-| PREV3D-06 | P2: dimensões e nº de partes | Design | Pending |
-| PREV3D-07 | P2: mesa + aviso de tamanho | Design | Pending |
+| PREV3D-01 | P1: geometria = `build_parts` (AC1, AC2) | Tasks | Verified (auto; UAT pending) |
+| PREV3D-02 | P1: auto-update só com aba visível (AC3, AC4) | Tasks | Verified (auto; UAT pending) |
+| PREV3D-03 | P1: descarte de resultado obsoleto (AC5) | Tasks | Verified (auto; UAT pending) |
+| PREV3D-04 | P1: câmera orbit/zoom/pan + reenquadrar (AC6, AC7) | Tasks | Verified (auto; UAT pending) |
+| PREV3D-05 | P1: estados vazio/erro (AC8, AC9, edge OpenGL) | Tasks | Verified (auto; UAT pending) |
+| PREV3D-06 | P2: dimensões e nº de partes | Tasks | Verified (auto; UAT pending) |
+| PREV3D-07 | P2: mesa + aviso de tamanho | Tasks | Verified (auto; UAT pending) |
 
-**Coverage:** 7 total, 0 mapped to tasks, 7 unmapped ⚠️ (esperado antes de Tasks)
+**Coverage:** 7 total, 7 mapped to tasks (T1–T11), 0 unmapped
 
 ---
 

@@ -10,7 +10,7 @@ Implement these tasks with the `tlc-spec-driven` skill: **activate it by name an
 
 **Spec**: `.specs/features/preview-3d/spec.md`
 **Design**: `.specs/features/preview-3d/design.md`
-**Status**: Draft
+**Status**: Done — T1–T11 + fixes F1 (529646a), F2 (dc97619); Verifier PASS iteration 3 (validation.md); manual UAT pending
 
 ---
 
@@ -20,7 +20,7 @@ Implement these tasks with the `tlc-spec-driven` skill: **activate it by name an
 
 | Code Layer | Required Test Type | Coverage Expectation | Location Pattern | Run Command |
 | ---------- | ------------------ | -------------------- | ---------------- | ----------- |
-| Pipeline / geometry / preview3d (Qt-free logic) | unit | All branches; 1:1 to spec ACs; every listed edge case (empty model, all merged, missing bed fields, boundary fit) | `tests/test_preview3d.py` | `python -m pytest tests/test_preview3d.py` |
+| Pipeline / geometry / preview3d (Qt-free logic) | unit | All branches; 1:1 to spec ACs; every listed edge case (all merged, missing bed fields, boundary fit) | `tests/test_preview3d.py` | `python -m pytest tests/test_preview3d.py` |
 | `bambu.PresetDB` (preset parsing) | unit | Key parse paths + every missing/invalid field branch; existing `bed_center` behavior preserved | `tests/test_preview3d.py` | `python -m pytest tests/test_preview3d.py` |
 | GUI widget `View3D` | integration (offscreen `QApplication`, scene state — not pixels, see AD-001) | Every public method: happy + empty + error states; spec strings exact | `tests/test_view3d.py` | `python -m pytest tests/test_view3d.py` |
 | GUI `MainWindow` wiring | integration (offscreen, `preview3d.build` monkeypatched to count calls) | Every trigger path (tab hidden/visible/switch, stale tag, failure, new image, machine change) + 2D preview regression | `tests/test_gui_preview3d.py` | `python -m pytest tests/test_gui_preview3d.py` |
@@ -60,7 +60,7 @@ T5 → T6 → T7
 ### Phase 3: Integration & packaging
 
 ```
-T8 → T9 → T10
+T8 → T9 → T10 → T11
 ```
 
 ---
@@ -79,11 +79,11 @@ T8 → T9 → T10
 
 **Done when**:
 
-- [ ] For `synthetic()` with default `Params`, `model()` returns same count, names, colors and `mesh.bounds` (allclose) as `geometry.build_parts(*segment.build_masks(...))`
-- [ ] Base Z bounds == `[0, base_mm]`; each color part Z bounds == `[base_mm, base_mm + relief_mm]` (non-default base/relief values, e.g. 3.0 / 2.0)
-- [ ] All colors merged into base → 1 part
-- [ ] Empty silhouette → `ValueError` propagates (same message as `build_parts`)
-- [ ] Gate quick passes; ≥ 12 passed (8 + ≥ 4 new)
+- [x] For `synthetic()` with default `Params`, `model()` returns same count, names, colors and `mesh.bounds` (allclose) as `geometry.build_parts(*segment.build_masks(...))`
+- [x] Base Z bounds == `[0, base_mm]`; each color part Z bounds == `[base_mm, base_mm + relief_mm]` (non-default base/relief values, e.g. 3.0 / 2.0)
+- [x] All colors merged into base → 1 part
+- [x] Empty silhouette → `ValueError` propagates (same message as `build_parts`)
+- [x] Gate quick passes; ≥ 12 passed (8 + ≥ 4 new)
 
 **Tests**: unit · **Gate**: quick
 **Commit**: `feat(pipeline): add model() returning export-identical parts`
@@ -102,10 +102,10 @@ T8 → T9 → T10
 
 **Done when**:
 
-- [ ] Fake preset tree under `tmp_path` (machine JSON with `printable_area` `["0x0","256x0","256x256","0x256"]`, `printable_height` `"256"`) → `(0, 0, 256, 256, 256.0)`
-- [ ] Missing `printable_height` → height `None`; missing/empty/unparseable `printable_area` → `None`
-- [ ] `bed_center` returns `(128.0, 128.0)` for the 256 bed, centre of a non-origin area (e.g. `10x20..210x220` → `(110, 120)`), and fallback `(128.0, 128.0)` when `bed()` is `None`
-- [ ] Gate quick passes; ≥ 16 passed
+- [x] Fake preset tree under `tmp_path` (machine JSON with `printable_area` `["0x0","256x0","256x256","0x256"]`, `printable_height` `"256"`) → `(0, 0, 256, 256, 256.0)`
+- [x] Missing `printable_height` → height `None`; missing/empty/unparseable `printable_area` → `None`
+- [x] `bed_center` returns `(128.0, 128.0)` for the 256 bed, centre of a non-origin area (e.g. `10x20..210x220` → `(110, 120)`), and fallback `(128.0, 128.0)` when `bed()` is `None`
+- [x] Gate quick passes; ≥ 16 passed
 
 **Tests**: unit · **Gate**: quick
 **Commit**: `feat(bambu): expose printable bed area and height`
@@ -124,11 +124,11 @@ T8 → T9 → T10
 
 **Done when**:
 
-- [ ] `len(vertices) == faces * 3 * 24` per part
-- [ ] Decoding `vertices` as float32 `(-1, 6)`: positions == `mesh.triangles` flattened; normals == `face_normals` repeated ×3
-- [ ] `lo`/`hi` == `mesh.bounds`; `name`/`color` == `Part.name`/`Part.color`
-- [ ] `build()` output order/count == `pipeline.model()` output
-- [ ] Gate quick passes; ≥ 20 passed
+- [x] `len(vertices) == faces * 3 * 24` per part
+- [x] Decoding `vertices` as float32 `(-1, 6)`: positions == `mesh.triangles` flattened; normals == `face_normals` repeated ×3
+- [x] `lo`/`hi` == `mesh.bounds`; `name`/`color` == `Part.name`/`Part.color`
+- [x] `build()` output order/count == `pipeline.model()` output
+- [x] Gate quick passes; ≥ 20 passed
 
 **Tests**: unit · **Gate**: quick
 **Commit**: `feat(preview3d): convert parts to render-ready mesh data`
@@ -147,10 +147,10 @@ T8 → T9 → T10
 
 **Done when**:
 
-- [ ] `size` of synthetic model at width 150, base 10, relief 1 → X ≈ 150.0 (± `simplify_mm`), Z == 11.0
-- [ ] `fits`: equal to bed dims → True; 0.1 mm over in X, Y or Z → False each; height `None` ignores Z
-- [ ] `describe(meshes, bed)` exact strings: `"150.0 × 120.3 × 11.0 mm — 3 partes"` format (1 decimal); + `"⚠ Modelo maior que a mesa (256 × 256 × 256 mm)."` when not fitting; `"(256 × 256 mm)"` form when height `None`; `"Mesa indisponível"` when bed `None`
-- [ ] Gate quick passes; ≥ 26 passed
+- [x] `size` of synthetic model at width 150, base 10, relief 1 → X ≈ 150.0 (± `simplify_mm` + `width_mm / sil_m.shape[1]`, i.e. one upsampled pixel lost by `to_polys` contour tracing — same as export), Z == 11.0
+- [x] `fits`: equal to bed dims → True; 0.1 mm over in X, Y or Z → False each; height `None` ignores Z
+- [x] `describe(meshes, bed)` exact strings: `"150.0 × 120.3 × 11.0 mm — 3 partes"` format (1 decimal); + `"⚠ Modelo maior que a mesa (256 × 256 × 256 mm)."` when not fitting; `"(256 × 256 mm)"` form when height `None`; `"Mesa indisponível"` when bed `None`
+- [x] Gate quick passes; ≥ 26 passed
 
 **Tests**: unit · **Gate**: quick
 **Commit**: `feat(preview3d): model size, bed fit check and info text`
@@ -169,13 +169,13 @@ T8 → T9 → T10
 
 **Done when**:
 
-- [ ] `ok` True offscreen; `set_parts(build(...), reframe=True)` → `part_count() == len(meshes)` and `info_text()` == `describe(meshes, None)`
-- [ ] Second `set_parts` with fewer meshes replaces (count drops), no leftovers
-- [ ] `show_message("x")` → `part_count() == 0`, `info_text() == "x"`
-- [ ] Fresh widget shows `"Abra uma imagem para ver o modelo 3D."`
-- [ ] Broken QML path (monkeypatched) → `ok` False and message starts `"Visualização 3D indisponível"`; no exception
-- [ ] `QQuickWidget.sceneGraphError` existence checked; connected if present, otherwise gap recorded in design Risks
-- [ ] Gate full passes; ≥ 31 passed
+- [x] `ok` True offscreen; `set_parts(build(...), reframe=True)` → `part_count() == len(meshes)` and `info_text()` == `describe(meshes, None)`
+- [x] Second `set_parts` with fewer meshes replaces (count drops), no leftovers
+- [x] `show_message("x")` → `part_count() == 0`, `info_text() == "x"`
+- [x] Fresh widget shows `"Abra uma imagem para ver o modelo 3D."`
+- [x] Broken QML path (monkeypatched) → `ok` False and message starts `"Visualização 3D indisponível"`; no exception
+- [x] `QQuickWidget.sceneGraphError` existence checked; connected if present, otherwise gap recorded in design Risks
+- [x] Gate full passes; ≥ 31 passed
 
 **Tests**: integration · **Gate**: full
 **Commit**: `feat(gui): add Qt Quick 3D view widget`
@@ -194,10 +194,10 @@ T8 → T9 → T10
 
 **Done when**:
 
-- [ ] `set_bed((0,0,256,256,256))` → QML bed visible with scale matching 256×256; model offset puts bbox centre at (128, 128)
-- [ ] `set_bed(None)` → bed hidden, `info_text()` contains `"Mesa indisponível"`, `part_count()` unchanged
-- [ ] Model larger than bed → warning text; changing bed to large one clears warning without calling `set_parts`
-- [ ] Gate full passes; ≥ 34 passed
+- [x] `set_bed((0,0,256,256,256))` → QML bed visible with scale matching 256×256; model offset puts bbox centre at (128, 128)
+- [x] `set_bed(None)` → bed hidden, `info_text()` contains `"Mesa indisponível"`, `part_count()` unchanged
+- [x] Model larger than bed → warning text; changing bed to large one clears warning without calling `set_parts`
+- [x] Gate full passes; ≥ 34 passed
 
 **Tests**: integration · **Gate**: full
 **Commit**: `feat(gui): draw printer bed and size warning in 3D view`
@@ -216,10 +216,10 @@ T8 → T9 → T10
 
 **Done when**:
 
-- [ ] After `set_parts(..., reframe=True)` camera/origin properties frame model (origin == model centre); moving camera then `set_parts(..., reframe=False)` leaves camera/origin unchanged
-- [ ] Larger model → larger camera distance on reframe
-- [ ] Pan handler present with middle/right buttons (QML object inspected); feel verified in manual UAT
-- [ ] Gate full passes; ≥ 37 passed
+- [x] After `set_parts(..., reframe=True)` camera/origin properties frame model (origin == model centre); moving camera then `set_parts(..., reframe=False)` leaves camera/origin unchanged
+- [x] Larger model → larger camera distance on reframe
+- [x] Pan handler present with middle/right buttons (QML object inspected); feel verified in manual UAT
+- [x] Gate full passes; ≥ 37 passed
 
 **Tests**: integration · **Gate**: full
 **Commit**: `feat(gui): camera reframing and mouse pan in 3D view`
@@ -238,13 +238,13 @@ T8 → T9 → T10
 
 **Done when**:
 
-- [ ] 3D tab not current + param change → `preview3d.build` call count 0, `dirty3d` True
-- [ ] Switching to 3D tab → exactly 1 call; switching away/back with no change → still 1
-- [ ] 3D tab current + param change → 1 new call after debounce; result shown (`part_count`)
-- [ ] `model_done` with stale tag ignored (view unchanged)
-- [ ] 2D preview still updates with 3D tab current (`"Prévia pronta"` status reached, `preview_done` applied)
-- [ ] `build` raising → `info_text()` == error msg, log contains `"Erro:"`, generate button still enabled
-- [ ] Gate full passes (incl. `gui_smoke.py` exit 0); ≥ 43 passed
+- [x] 3D tab not current + param change → `preview3d.build` call count 0, `dirty3d` True
+- [x] Switching to 3D tab → exactly 1 call; switching away/back with no change → still 1
+- [x] 3D tab current + param change → 1 new call after debounce; result shown (`part_count`)
+- [x] `model_done` with stale tag ignored (view unchanged)
+- [x] 2D preview still updates with 3D tab current (`"Prévia pronta"` status reached, `preview_done` applied)
+- [x] `build` raising → `info_text()` == error msg, log contains `"Erro:"`, generate button still enabled
+- [x] Gate full passes (incl. `gui_smoke.py` exit 0); ≥ 54 passed
 
 **Tests**: integration · **Gate**: full
 **Commit**: `feat(gui): wire 3D preview tab to model task`
@@ -253,8 +253,8 @@ T8 → T9 → T10
 
 ### T9: MainWindow reframe on new image + bed on machine change
 
-**What**: `reframe3d` set in `open_image` path and consumed in `model_done`; `machine_changed` calls `view3d.set_bed(db.bed(machine))`.
-**Where**: `img2bambu/gui/main_window.py`; tests in `tests/test_gui_preview3d.py`
+**What**: `reframe3d` set in `open_image` path and consumed in `model_done`; `machine_changed` (and preset load) calls `view3d.set_bed(db.bed(machine))`; `View3D.set_bed` translates the orbit origin by the same delta it moves the model, so the camera view of the model is unchanged on printer change (found in Batch A: otherwise model drifts off-centre).
+**Where**: `img2bambu/gui/main_window.py`, `img2bambu/gui/view3d.py`; tests in `tests/test_gui_preview3d.py`, `tests/test_view3d.py`
 **Depends on**: T8
 **Reuses**: `machine_changed`, `PresetDB.bed`
 **Requirement**: PREV3D-04, PREV3D-07
@@ -263,10 +263,11 @@ T8 → T9 → T10
 
 **Done when**:
 
-- [ ] First `model_done` after new image → `set_parts(reframe=True)`; later ones `reframe=False` (spy on `View3D.set_parts`)
-- [ ] Machine change → `set_bed` called with `db.bed(new machine)` and `build` call count unchanged
-- [ ] `db` not ok → `set_bed(None)` → `"Mesa indisponível"`
-- [ ] Gate full passes; ≥ 46 passed
+- [x] First `model_done` after new image → `set_parts(reframe=True)`; later ones `reframe=False` (spy on `View3D.set_parts`)
+- [x] Machine change → `set_bed` called with `db.bed(new machine)` and `build` call count unchanged
+- [x] `db` not ok → `set_bed(None)` → `"Mesa indisponível"`
+- [x] Framed model, then `set_bed` with a different bed centre → orbit origin moves by exactly the model's offset delta (model stays at same place relative to origin)
+- [x] Gate full passes; ≥ 58 passed
 
 **Tests**: integration · **Gate**: full
 **Commit**: `feat(gui): reframe 3D view on new image and track printer bed`
@@ -285,14 +286,39 @@ T8 → T9 → T10
 
 **Done when**:
 
-- [ ] `python -m PyInstaller --noconfirm img2bambu.spec` succeeds; `dist\Img2Bambu` contains `view3d.qml` and Qt Quick 3D plugins
-- [ ] `gui_smoke.py` exit 0 and prints `part_count > 0`
-- [ ] Bundle size delta recorded (before/after `dist\Img2Bambu` size)
+- [x] `python -m PyInstaller --noconfirm img2bambu.spec` succeeds; `dist\Img2Bambu` contains `view3d.qml` and Qt Quick 3D plugins
+- [x] `gui_smoke.py` exit 0 and prints `part_count > 0`
+- [x] Bundle size delta recorded (before/after `dist\Img2Bambu` size)
 - [ ] Manual UAT: exe opens, 3D tab shows model on bed, orbit/zoom/pan work (user confirms)
-- [ ] Gate build passes; test count unchanged from T9
+- [x] Gate build passes; test count unchanged from T9
 
 **Tests**: none · **Gate**: build
 **Commit**: `build: ship 3D view QML in exe and smoke-test 3D tab`
+
+---
+
+### T11: Trim unused Qt modules from the exe bundle
+
+**What**: Filter `a.binaries` / `a.datas` in `img2bambu.spec` so unused Qt modules pulled in by the PySide6 QtQuick/QtQml hooks are dropped (notably `Qt6WebEngineCore.dll` 203 MB, QML trees for QtWebEngine, Qt3D, QtCharts, QtGraphs, QtDataVisualization, QtLocation, QtMultimedia, QtQuick3D Physics/Particles3D/Xr/SpatialAudio, unused QuickControls2 styles), keeping everything `view3d.qml` actually loads.
+**Why**: Measured 2026-10-23 — main bundle 321,180,810 B vs feature 635,858,541 B (+314 MB); 203 MB is WebEngine alone (added after Batch B, approved by user).
+**Where**: `img2bambu.spec`
+**Depends on**: T10
+**Reuses**: existing `excludes` list / spec structure
+**Requirement**: PREV3D-01 (packaged)
+
+**Tools**: MCP: NONE · Skill: NONE
+
+**Done when**:
+
+- [x] Required set derived empirically, not guessed: run `View3D` from source offscreen with `QML_IMPORT_TRACE=1` (and `QT_DEBUG_PLUGINS=1` if useful), list every QML module / plugin DLL loaded; each one exists in the trimmed `dist\Img2Bambu`
+- [x] `Qt6WebEngineCore.dll` and the excluded QML trees absent from `dist\Img2Bambu`
+- [x] Bundle size recorded: target ≤ main baseline + 40 MB (≤ ~361 MB); report actual
+- [x] Exe starts and keeps running ≥ 10 s (no immediate crash), then killed; `Img2Bambu.exe --cli <smoke.png> --stl-only` with `IMG2BAMBU_LOG` still produces STLs
+- [x] Gate build passes; test count unchanged (64)
+- [ ] Manual UAT (user): exe 3D tab shows model
+
+**Tests**: none · **Gate**: build
+**Commit**: `build: drop unused Qt modules from exe bundle`
 
 ---
 
@@ -303,7 +329,7 @@ Phase 1 → Phase 2 → Phase 3
 
 Phase 1:  T1 ──→ T2 ──→ T3 ──→ T4
 Phase 2:  T5 ──→ T6 ──→ T7
-Phase 3:  T8 ──→ T9 ──→ T10
+Phase 3:  T8 ──→ T9 ──→ T10 ──→ T11
 ```
 
 Dependency notes: T3 needs T1 only and T4 needs T2+T3; with sequential execution the chain above satisfies both.
