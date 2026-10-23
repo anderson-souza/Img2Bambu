@@ -1,7 +1,7 @@
 # PyInstaller spec — build with: pyinstaller --noconfirm img2bambu.spec
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
-datas = collect_data_files("trimesh")
+datas = collect_data_files("trimesh") + [("img2bambu/gui/view3d.qml", "img2bambu/gui")]
 hidden = collect_submodules("trimesh.exchange") + ["mapbox_earcut", "shapely"]
 # why: GUI never uses these heavy optional deps; excluding them keeps the bundle small
 excludes = ["matplotlib", "scipy", "sklearn", "pandas", "IPython", "tkinter", "manifold3d", "pytest"]
