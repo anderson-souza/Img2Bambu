@@ -60,6 +60,15 @@ def settle(qapp, w, timeout=60):
     raise AssertionError("GUI did not settle")
 
 
+def wait_until(qapp, cond, timeout=60):
+    end = time.time() + timeout
+    while not cond():
+        if time.time() > end:
+            raise AssertionError("condition not reached")
+        qapp.processEvents()
+        time.sleep(0.01)
+
+
 def load(qapp, w):
     w.rgba = synthetic()
     w.reanalyze()
@@ -228,21 +237,35 @@ def test_stale_model_failure_ignored(qapp, win, calls):
     assert "Erro: x" not in win.log.toPlainText()
 
 
-def test_model_updates_while_export_runs(qapp, win, calls, tmp_path):
+def test_model_updates_while_export_runs(qapp, win, calls, tmp_path, monkeypatch):
+    import threading
+    from types import SimpleNamespace
     from PySide6.QtCore import QSettings
     load(qapp, win)
     win.tabs.setCurrentWidget(win.view3d)
     settle(qapp, win)
+    release, started = threading.Event(), threading.Event()
+
+    def held_export(*a, **k):
+        started.set()
+        release.wait()
+        return SimpleNamespace(stls=[], project=None, check=None, warnings=[])
+    monkeypatch.setattr(main_window.pipeline, "export", held_export)
     win.settings = QSettings(str(tmp_path / "s.ini"), QSettings.IniFormat)
-    win.ed_exe.setText("")                   # STL-only export, no Bambu Studio
+    win.ed_exe.setText("")
     win.ed_out.setText(str(tmp_path / "out")); win.ed_name.setText("t")
-    win.generate()
-    assert win.busy_export is True
-    win.sp_relief.setValue(2.0)
+    try:
+        win.generate()
+        assert started.wait(10)
+        win.sp_relief.setValue(2.0)
+        wait_until(qapp, lambda: len(calls) == 2 and "× 12.0 mm" in win.view3d.info_text())
+        assert win.busy_export is True and not release.is_set()     # export still held open
+        assert "× 12.0 mm — 3 partes" in win.view3d.info_text()
+        assert win.view3d.part_count() == 3
+    finally:
+        release.set()
     settle(qapp, win)
-    assert len(calls) == 2
-    assert "× 12.0 mm — 3 partes" in win.view3d.info_text()
-    assert win.busy_export is False and (tmp_path / "out").is_dir()
+    assert win.busy_export is False
 
 
 def test_broken_3d_view_keeps_rest_of_gui(qapp, monkeypatch, presets, tmp_path):
