@@ -4,7 +4,7 @@ import time
 import pytest
 
 from img2bambu import bambu, preview3d
-from img2bambu.gui import main_window
+from img2bambu.gui import main_window, view3d
 from img2bambu.gui.main_window import MainWindow
 from test_core import synthetic
 
@@ -213,5 +213,48 @@ def test_no_presets_shows_bed_unavailable(qapp, monkeypatch, tmp_path, calls):
     settle(qapp, w)
     assert w.view3d.part_count() == 3
     assert "Mesa indisponível" in w.view3d.info_text()
+    w.close()
+    w.deleteLater()
+
+
+def test_stale_model_failure_ignored(qapp, win, calls):
+    load(qapp, win)
+    win.tabs.setCurrentWidget(win.view3d)
+    settle(qapp, win)
+    before = win.view3d.info_text()
+    win.model_failed(win.req3d - 1, "x")
+    assert win.view3d.part_count() == 3
+    assert win.view3d.info_text() == before
+    assert "Erro: x" not in win.log.toPlainText()
+
+
+def test_model_updates_while_export_runs(qapp, win, calls, tmp_path):
+    from PySide6.QtCore import QSettings
+    load(qapp, win)
+    win.tabs.setCurrentWidget(win.view3d)
+    settle(qapp, win)
+    win.settings = QSettings(str(tmp_path / "s.ini"), QSettings.IniFormat)
+    win.ed_exe.setText("")                   # STL-only export, no Bambu Studio
+    win.ed_out.setText(str(tmp_path / "out")); win.ed_name.setText("t")
+    win.generate()
+    assert win.busy_export is True
+    win.sp_relief.setValue(2.0)
+    settle(qapp, win)
+    assert len(calls) == 2
+    assert "× 12.0 mm — 3 partes" in win.view3d.info_text()
+    assert win.busy_export is False and (tmp_path / "out").is_dir()
+
+
+def test_broken_3d_view_keeps_rest_of_gui(qapp, monkeypatch, presets, tmp_path):
+    monkeypatch.setattr(bambu, "PresetDB", lambda: RealDB(root=presets))
+    monkeypatch.setattr(view3d, "QML", str(tmp_path / "missing.qml"))
+    w = MainWindow()
+    settle(qapp, w)
+    load(qapp, w)
+    assert "Prévia pronta" in w.statusBar().currentMessage()
+    w.tabs.setCurrentWidget(w.view3d)
+    settle(qapp, w)
+    assert w.view3d.info_text().startswith("Visualização 3D indisponível")
+    assert w.bt_gen.isEnabled()
     w.close()
     w.deleteLater()

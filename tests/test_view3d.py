@@ -1,5 +1,5 @@
 import pytest
-from PySide6.QtCore import QPoint, Qt
+from PySide6.QtCore import QObject, QPoint, Qt
 from PySide6.QtGui import QVector3D
 from PySide6.QtQuick import QQuickWindow
 from PySide6.QtTest import QTest
@@ -176,3 +176,21 @@ def test_bed_change_moves_orbit_with_model(view, meshes):
     assert (m1[0] - m0[0], m1[1] - m0[1]) == pytest.approx((47, 32))
     # invariant: model (x, y) maps to scene (x, -z) under the container's -90° X rotation
     assert (o1[0] - o0[0], o1[1] - o0[1], o1[2] - o0[2]) == pytest.approx((47, 0, -32))
+
+
+def _material_colors(view):
+    mats = [o for o in view._node("model").findChildren(QObject)
+            if o.metaObject().className() == "QQuick3DPrincipledMaterial"]
+    return [o.property("baseColor").getRgb()[:3] for o in mats]
+
+
+def test_each_part_rendered_in_its_color(view, meshes):
+    view.set_parts(meshes, reframe=True)
+    assert _material_colors(view) == [tuple(m.color) for m in meshes]
+
+
+def test_more_than_four_parts_all_shown(view, meshes):
+    five = (list(meshes) * 2)[:5]
+    view.set_parts(five, reframe=True)
+    assert view.part_count() == 5
+    assert "— 5 partes" in view.info_text()
