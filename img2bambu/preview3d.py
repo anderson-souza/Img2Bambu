@@ -26,3 +26,26 @@ def mesh_data(part):
 
 def build(an, palette: Palette, params: Params):
     return [mesh_data(p) for p in pipeline.model(an, palette, params)]
+
+
+def size(meshes):
+    lo = np.min([m.lo for m in meshes], axis=0)
+    hi = np.max([m.hi for m in meshes], axis=0)
+    return tuple(float(v) for v in hi - lo)
+
+
+def fits(sz, bed):
+    x0, y0, x1, y1, h = bed
+    return sz[0] <= x1 - x0 and sz[1] <= y1 - y0 and (h is None or sz[2] <= h)
+
+
+def describe(meshes, bed):
+    x, y, z = size(meshes)
+    n = len(meshes)
+    lines = [f"{x:.1f} × {y:.1f} × {z:.1f} mm — {n} {'parte' if n == 1 else 'partes'}"]
+    if bed is None:
+        lines.append("Mesa indisponível")
+    elif not fits((x, y, z), bed):
+        dims = [bed[2] - bed[0], bed[3] - bed[1]] + ([bed[4]] if bed[4] is not None else [])
+        lines.append(f"⚠ Modelo maior que a mesa ({' × '.join(f'{v:g}' for v in dims)} mm).")
+    return "\n".join(lines)

@@ -123,3 +123,56 @@ def test_build_follows_model_order(model_parts):
     assert [m.name for m in meshes] == [pt.name for pt in parts]
     assert [m.color for m in meshes] == [tuple(pt.color) for pt in parts]
     assert all(np.allclose(m.lo, pt.mesh.bounds[0]) for m, pt in zip(meshes, parts))
+
+
+def test_size_of_synthetic_model():
+    p = Params(width_mm=150, base_mm=10, relief_mm=1)
+    an = segment.analyze(synthetic(), p)
+    x, y, z = preview3d.size(preview3d.build(an, an.palette, p))
+    sil_m, _ = segment.build_masks(an, an.palette, p)
+    # why: to_polys traces contours through pixel centres, losing one upsampled pixel of width (same as export)
+    assert x == pytest.approx(150.0, abs=p.simplify_mm + p.width_mm / sil_m.shape[1])
+    assert z == pytest.approx(11.0)
+
+
+BED = (0, 0, 256, 256, 256.0)
+
+
+@pytest.mark.parametrize("sz, ok", [
+    ((256, 256, 256), True),
+    ((256.1, 256, 256), False),
+    ((256, 256.1, 256), False),
+    ((256, 256, 256.1), False),
+])
+def test_fits_boundary(sz, ok):
+    assert preview3d.fits(sz, BED) is ok
+
+
+def test_fits_ignores_z_without_height():
+    assert preview3d.fits((256, 256, 9999), (0, 0, 256, 256, None)) is True
+    assert preview3d.fits((256.1, 256, 1), (0, 0, 256, 256, None)) is False
+
+
+def _md(lo, hi):
+    return preview3d.MeshData("p", (0, 0, 0), b"", lo, hi)
+
+
+SMALL = [_md((10, 20, 0), (160, 140.3, 10)), _md((30, 40, 10), (100, 90, 11)), _md((12, 22, 10), (20, 30, 11))]
+BIG = [_md((0, 0, 0), (300, 120, 11))]
+
+
+def test_describe_size_and_count_fitting():
+    assert preview3d.describe(SMALL, BED) == "150.0 × 120.3 × 11.0 mm — 3 partes"
+
+
+def test_describe_warns_when_too_big():
+    assert preview3d.describe(BIG, BED) == \
+        "300.0 × 120.0 × 11.0 mm — 1 parte\n⚠ Modelo maior que a mesa (256 × 256 × 256 mm)."
+
+
+def test_describe_warning_without_height():
+    assert preview3d.describe(BIG, (0, 0, 256, 256, None)).endswith("⚠ Modelo maior que a mesa (256 × 256 mm).")
+
+
+def test_describe_without_bed():
+    assert preview3d.describe(SMALL, None) == "150.0 × 120.3 × 11.0 mm — 3 partes\nMesa indisponível"
