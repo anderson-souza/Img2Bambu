@@ -26,3 +26,6 @@ dist/
 .idea/
 Thumbs.db
 Desktop.ini
+
+# Local working images
+workdir/
