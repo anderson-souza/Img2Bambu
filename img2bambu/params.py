@@ -37,5 +37,16 @@ class Palette:
         return [i for i in range(len(self.colors)) if self.resolve(i) == i]
 
 
+def carry_over(old, new):
+    """New palette from a re-analysis, keeping the user's edited rows of the same image."""
+    if old is None:
+        return new
+    for i in old.edited:
+        if i < len(new.colors):
+            new.colors[i], new.samples[i] = old.colors[i], old.samples[i]
+            new.edited.add(i)
+    return new
+
+
 def hex_color(rgb):
     return "#{:02X}{:02X}{:02X}".format(*[int(c) for c in rgb])

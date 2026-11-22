@@ -1,3 +1,4 @@
+from PIL import Image
 from PySide6.QtGui import QColor
 
 from img2bambu.gui import main_window
@@ -95,3 +96,32 @@ def test_empty_row_not_counted(qapp, win, monkeypatch):
     assert win.rows[hi].pct.text() == "0%"
     assert win.lbl_colors.text().startswith("2 filamento(s)")
 
+
+def test_reanalysis_keeps_edited_row(qapp, win, monkeypatch):
+    load_sg(qapp, win)
+    sage = row_of(win, SAGE)
+    answer(monkeypatch, (255, 255, 255), [])
+    win.rows[sage].swatch.click()
+    settle(qapp, win)
+    kept = (win.palette.colors[sage], win.palette.samples[sage])
+    win.sp_n.setValue(4)
+    settle(qapp, win)
+    assert len(win.rows) == 4
+    assert (win.palette.colors[sage], win.palette.samples[sage]) == kept
+    assert win.palette.edited == {sage}
+
+
+def test_new_image_starts_fresh(qapp, win, monkeypatch, tmp_path):
+    img = tmp_path / "sg.png"
+    Image.fromarray(sage_green()).save(img)
+    monkeypatch.setattr(main_window.QFileDialog, "getOpenFileName", lambda *a, **k: (str(img), ""))
+    win.open_image()
+    settle(qapp, win)
+    sage = row_of(win, SAGE)
+    answer(monkeypatch, (255, 255, 255), [])
+    win.rows[sage].swatch.click()
+    settle(qapp, win)
+    win.open_image()
+    settle(qapp, win)
+    assert win.palette.edited == set()
+    assert (255, 255, 255) not in win.palette.colors

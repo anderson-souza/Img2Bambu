@@ -252,3 +252,20 @@ def bambu_hex(c):
     from img2bambu.params import hex_color
     return hex_color(c)
 
+
+def _pal(n, edited=()):
+    from img2bambu.params import Palette
+    return Palette(colors=[(i, i, i) for i in range(n)], samples=[(i, 0, 0) for i in range(n)], edited=set(edited))
+
+
+def test_carry_over_keeps_edited_rows():
+    from img2bambu.params import carry_over
+    old = _pal(4, {3})
+    old.colors[3], old.samples[3] = (255, 255, 255), (215, 213, 179)
+    grown = carry_over(old, _pal(6))
+    assert grown.colors[3] == (255, 255, 255) and grown.samples[3] == (215, 213, 179)
+    assert grown.edited == {3}
+    assert [grown.colors[i] for i in (0, 1, 2, 4, 5)] == [(i, i, i) for i in (0, 1, 2, 4, 5)]
+    shrunk = carry_over(old, _pal(3))
+    assert shrunk.colors == [(i, i, i) for i in range(3)] and shrunk.edited == set()
+    assert carry_over(None, _pal(3)).colors == [(i, i, i) for i in range(3)]

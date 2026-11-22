@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import bambu, pipeline, preview3d, segment
-from ..params import Params, hex_color
+from ..params import Params, carry_over, hex_color
 from .view3d import View3D
 from .worker import Task
 
@@ -116,6 +116,7 @@ class MainWindow(QMainWindow):
         self.rgba = None
         self.analysis = None
         self.palette = None
+        self.fresh_image = True
         self.rows = []
         self.req = 0
         # why: separate counter so 3D results never invalidate the 2D preview tagged with self.req
@@ -297,6 +298,7 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Erro", f"Não foi possível abrir a imagem:\n{e}")
             return
         self.image_path = path
+        self.fresh_image = True
         self.lbl_file.setText(os.path.basename(path))
         self.view_orig.set_image(self.rgba, refit=True)
         self.view_prev._fitted = False
@@ -330,7 +332,8 @@ class MainWindow(QMainWindow):
     def analysis_done(self, tag, an):
         if tag != self.req:
             return
-        self.analysis, self.palette = an, an.palette
+        keep = None if self.fresh_image else self.palette
+        self.analysis, self.palette, self.fresh_image = an, carry_over(keep, an.palette), False
         if an.note:
             self.log_msg(an.note)
         self.build_rows()
