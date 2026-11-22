@@ -14,6 +14,9 @@ class Analysis:
     labels: np.ndarray      # int, -1 outside silhouette
     palette: Palette
     note: str = ""
+    centers: np.ndarray = None   # k-means centers in LAB, label order
+    lab: np.ndarray = None       # LAB of silhouette pixels, in sil order
+    samples: tuple = ()          # initial palette.samples (centers as RGB)
 
 
 def load_image(path):
@@ -52,7 +55,13 @@ def _to_lab(rgb_rows):
     return cv2.cvtColor(rgb_rows.reshape(-1, 1, 3).astype(np.uint8), cv2.COLOR_RGB2LAB).reshape(-1, 3).astype(np.float32)
 
 
+def _to_rgb(lab_rows):
+    lab = np.clip(np.round(lab_rows), 0, 255).astype(np.uint8).reshape(-1, 1, 3)
+    return [tuple(int(c) for c in v) for v in cv2.cvtColor(lab, cv2.COLOR_LAB2RGB).reshape(-1, 3)]
+
+
 def kmeans_palette(rgba, sil, n, seed=0):
+    """Returns (labels, median colors, centers in LAB, pixel LAB), labels sorted dark -> light."""
     rgb = rgba[..., :3][sil]
     lab = _to_lab(rgb)
     rng = np.random.default_rng(seed)
@@ -72,7 +81,7 @@ def kmeans_palette(rgba, sil, n, seed=0):
     for i in range(n):
         m = rgb[lab_labels == i]
         colors.append(tuple(int(c) for c in (np.median(m, 0) if len(m) else (128, 128, 128))))
-    return labels, colors
+    return labels, colors, centers[order], lab
 
 
 def suggest_base(labels, sil, n):
@@ -91,10 +100,49 @@ def analyze(path_or_rgba, params: Params):
     rgba = load_image(path_or_rgba) if isinstance(path_or_rgba, str) else path_or_rgba
     sil, note = silhouette(rgba, params)
     rgba, sil = _crop(rgba, sil)
-    labels, colors = kmeans_palette(rgba, sil, params.n_colors)
+    labels, colors, centers, lab = kmeans_palette(rgba, sil, params.n_colors)
+    samples = _to_rgb(centers)
     pal = Palette(colors=colors, base_index=suggest_base(labels, sil, len(colors)),
-                  streak=suggest_streak(colors))
-    return Analysis(rgba, sil, labels, pal, note)
+                  streak=suggest_streak(colors), samples=list(samples))
+    return Analysis(rgba, sil, labels, pal, note, centers, lab, tuple(samples))
+
+
+def assign(an: Analysis, palette: Palette):
+    """Labels each silhouette pixel with the row whose sample is nearest in LAB (-1 outside)."""
+    changed = [i for i, s in enumerate(palette.samples) if tuple(s) != an.samples[i]]
+    if not changed:
+        return an.labels
+    # why: once any row is edited every row uses its RGB sample, so equal swatches tie exactly
+    refs = _to_lab(np.array([tuple(s) for s in palette.samples]))
+    best = np.full(len(an.lab), np.inf, np.float32)
+    lab_labels = np.zeros(len(an.lab), int)
+    for i, r in enumerate(refs):
+        d = ((an.lab - r) ** 2).sum(1)
+        closer = d < best                   # invariant: strict < so a tie keeps the lower index
+        best[closer], lab_labels[closer] = d[closer], i
+    labels = np.full(an.sil.shape, -1, int)
+    labels[an.sil] = lab_labels
+    return labels
+
+
+def carry_over(old, new):
+    """New palette from a re-analysis: each edited row of the same image replaces the nearest new row."""
+    if old is None or not old.edited:
+        return new
+    edited = sorted(old.edited)
+    a = _to_lab(np.array([tuple(old.samples[i]) for i in edited]))
+    b = _to_lab(np.array([tuple(s) for s in new.samples]))
+    d = ((a[:, None, :] - b[None, :, :]) ** 2).sum(-1)
+    used_old, used_new = set(), set()
+    # why: k-means re-sorts rows dark -> light, so position does not identify a color across runs
+    for k in np.argsort(d, axis=None, kind="stable"):
+        oi, nj = divmod(int(k), len(new.samples))
+        if oi in used_old or nj in used_new:
+            continue
+        used_old.add(oi); used_new.add(nj)
+        new.colors[nj], new.samples[nj] = old.colors[edited[oi]], old.samples[edited[oi]]
+        new.edited.add(nj)
+    return new
 
 
 def mm_per_px(an: Analysis, params: Params):
@@ -136,7 +184,7 @@ def build_masks(an: Analysis, palette: Palette, params: Params):
     d = params.min_detail_mm
     sil_m = clean(an.sil, params, mpp, d, 2.0, 1.0)
     lut = np.array([palette.resolve(i) for i in range(len(palette.colors))] + [-1])
-    resolved = lut[an.labels]          # label -1 indexes the trailing -1 sentinel
+    resolved = lut[assign(an, palette)]          # label -1 indexes the trailing -1 sentinel
     masks, taken = {}, np.zeros_like(sil_m)
     streak = palette.streak
     for c in palette.active():
