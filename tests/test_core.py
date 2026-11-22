@@ -135,3 +135,120 @@ def test_bee_end_to_end(tmp_path):
     assert len(res.stls) == 3 and os.path.isfile(res.project)
     assert res.check["changes"] > 0
     assert len(res.check["colours"]) == 3
+
+
+SAGE, GREEN, PATCH = (215, 213, 179), (171, 171, 107), (180, 178, 120)
+
+
+def sage_green():
+    """Dark disc; left half sage, right half green, with a sage-ish-green patch inside the green half."""
+    img = synthetic()
+    img[60:340, 60:200] = (*SAGE, 255)
+    img[60:340, 200:340] = (*GREEN, 255)
+    img[150:250, 240:300] = (*PATCH, 255)
+    return img
+
+
+def _row_of(an, color):
+    return min(range(len(an.palette.colors)),
+               key=lambda i: sum((a - b) ** 2 for a, b in zip(an.palette.colors[i], color)))
+
+
+def test_analysis_initial_samples_and_filaments():
+    an = segment.analyze(sage_green(), Params(width_mm=100, n_colors=3))
+    pal = an.palette
+    assert len(pal.samples) == len(pal.colors) == 3
+    assert pal.edited == set()
+    sage = _row_of(an, SAGE)
+    assert pal.colors[sage] == SAGE                                  # filament = cluster median
+    assert max(abs(a - b) for a, b in zip(pal.samples[sage], SAGE)) <= 3   # sample = cluster center
+
+
+def test_initial_sample_is_cluster_center_not_median():
+    img = sage_green()
+    img[60:140, 200:340] = (*PATCH, 255)          # ~44% of the green+patch cluster: median != mean
+    an = segment.analyze(img, Params(width_mm=100, n_colors=3))
+    green = _row_of(an, GREEN)
+    assert an.palette.colors[green] == GREEN
+    lab = an.lab[an.labels[an.sil] == green].mean(0)
+    mean_rgb = segment._to_rgb(lab[None, :])[0]
+    assert max(abs(a - b) for a, b in zip(an.palette.samples[green], mean_rgb)) <= 1
+    assert an.palette.samples[green] != GREEN
+
+
+def test_sample_edit_pulls_pixels_filament_edit_does_not():
+    p = Params(width_mm=100, n_colors=3)
+    an = segment.analyze(sage_green(), p)
+    pal = an.palette
+    sage, green = _row_of(an, SAGE), _row_of(an, GREEN)
+    y, x = 200 - 20, 270 - 20                    # patch pixel, in the cropped frame (crop offset 20)
+    assert segment.assign(an, pal)[y, x] == green
+    pal.samples[sage] = PATCH
+    labels = segment.assign(an, pal)
+    assert labels[y, x] == sage
+    assert labels[100, 100] == sage and labels[100, 260] == green
+    pal.colors[sage] = (255, 255, 255)
+    assert (segment.assign(an, pal) == labels).all()
+    sil_m, masks, prev = pipeline.render(an, pal, p)
+    up = p.upsample
+    assert tuple(prev[y * up, x * up]) == (255, 255, 255)
+
+
+def test_unedited_rows_keep_kmeans_split():
+    rng = np.random.default_rng(1)
+    img = sage_green()
+    noise = rng.integers(-25, 26, img[..., :3].shape)
+    img[..., :3] = np.clip(img[..., :3].astype(int) + noise, 0, 255).astype(np.uint8)
+    an = segment.analyze(img, Params(width_mm=100, n_colors=4))
+    pal = an.palette
+    assert segment.assign(an, pal) is an.labels
+    pal.samples[0] = tuple(pal.samples[0])          # same value re-entered: still unedited
+    assert (segment.assign(an, pal) == an.labels).all()
+    far = 3
+    pal.samples[far] = (0, 0, 255)                  # pure blue: nothing in the image is near it
+    labels = segment.assign(an, pal)
+    kept = (an.labels >= 0) & (an.labels != far)
+    # why: edited palettes use rounded RGB samples, so only boundary pixels may move
+    assert (labels[kept] == an.labels[kept]).mean() > 0.99
+    assert not (labels == far).any()
+
+
+def test_equal_samples_tie_goes_to_lower_index():
+    an = segment.analyze(sage_green(), Params(width_mm=100, n_colors=3))
+    pal = an.palette
+    sage, green = _row_of(an, SAGE), _row_of(an, GREEN)
+    lo, hi = sorted((sage, green))
+    pal.samples[hi] = tuple(pal.samples[lo])
+    labels = segment.assign(an, pal)
+    assert not (labels == hi).any()
+    assert (labels[an.labels == hi] == lo).all()
+
+
+def test_export_uses_filament_not_sample(tmp_path, monkeypatch):
+    p = Params(width_mm=100, n_colors=3)
+    an = segment.analyze(sage_green(), p)
+    pal = an.palette
+    sage = _row_of(an, SAGE)
+    pal.samples[sage] = PATCH
+    pal.colors[sage] = (255, 255, 255)
+    seen = {}
+    monkeypatch.setattr(bambu, "export_project", lambda *a, **k: seen.setdefault("colors", a[7]))
+
+    class DB:
+        def bed_center(self, m):
+            return (128.0, 128.0)
+    choice = pipeline.BambuChoice("bambu-studio", "M", "P", "F")
+    res = pipeline.export(an, pal, p, str(tmp_path), "t", choice, DB())
+    expected = [bambu_hex(pal.colors[i]) for i in [pal.base_index] + [i for i in range(3) if i != pal.base_index]]
+    assert sorted(seen["colors"]) == sorted(expected)
+    assert "#FFFFFF" in seen["colors"] and bambu_hex(PATCH) not in seen["colors"]
+    from PIL import Image
+    prev = np.array(Image.open(res.preview))
+    up = p.upsample
+    assert tuple(prev[180 * up, 250 * up][:3]) == (255, 255, 255)
+
+
+def bambu_hex(c):
+    from img2bambu.params import hex_color
+    return hex_color(c)
+

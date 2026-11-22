@@ -59,16 +59,19 @@ class ColorRow(QWidget):
         super().__init__()
         self.win, self.idx = win, idx
         lay = QHBoxLayout(self); lay.setContentsMargins(0, 0, 0, 0)
+        self.sample = QPushButton(); self.sample.setFixedSize(42, 24)
+        self.sample.setToolTip("Cor na imagem: define quais pixels vão para esta cor (clique para alterar)")
+        self.sample.clicked.connect(lambda: self.pick("samples", "Cor na imagem"))
         self.swatch = QPushButton(); self.swatch.setFixedSize(42, 24)
         self.swatch.setToolTip("Cor do filamento (clique para alterar)")
-        self.swatch.clicked.connect(self.pick)
+        self.swatch.clicked.connect(lambda: self.pick("colors", "Cor do filamento"))
         self.base = QRadioButton("Base")
         self.base.setToolTip("Cor da base de trás (silhueta inteira)")
         self.streak = QCheckBox("Filtro reflexo")
         self.streak.setToolTip("Remove listras finas desta cor (reflexos de brilho)")
         self.merge = QComboBox(); self.merge.setToolTip("Mesclar esta cor em outra")
         self.pct = QLabel()
-        for w in (self.swatch, self.base, self.streak, self.merge, self.pct):
+        for w in (self.sample, QLabel("→"), self.swatch, self.base, self.streak, self.merge, self.pct):
             lay.addWidget(w)
         lay.addStretch()
 
@@ -77,6 +80,7 @@ class ColorRow(QWidget):
         c = pal.colors[self.idx]
         self.swatch.setStyleSheet(f"background:{hex_color(c)}; border:1px solid #555;")
         self.swatch.setText("")
+        self.sample.setStyleSheet(f"background:{hex_color(pal.samples[self.idx])}; border:1px solid #555;")
         self.base.setChecked(pal.base_index == self.idx)
         self.streak.blockSignals(True); self.streak.setChecked(self.idx in pal.streak); self.streak.blockSignals(False)
         self.merge.blockSignals(True)
@@ -91,10 +95,12 @@ class ColorRow(QWidget):
         for w in (self.base, self.streak):
             w.setEnabled(not merged)
 
-    def pick(self):
-        c = QColorDialog.getColor(QColor(*self.win.palette.colors[self.idx]), self, "Cor do filamento")
+    def pick(self, field, title):
+        values = getattr(self.win.palette, field)
+        c = QColorDialog.getColor(QColor(*values[self.idx]), self, title)
         if c.isValid():
-            self.win.palette.colors[self.idx] = (c.red(), c.green(), c.blue())
+            values[self.idx] = (c.red(), c.green(), c.blue())
+            self.win.palette.edited.add(self.idx)
             self.win.palette_changed()
 
 
@@ -345,13 +351,17 @@ class MainWindow(QMainWindow):
         self.refresh_rows()
 
     def refresh_rows(self):
-        lab = self.analysis.labels
+        pal = self.palette
+        lab = segment.assign(self.analysis, pal)
         tot = max(1, int((lab >= 0).sum()))
-        counts = np.bincount(lab[lab >= 0], minlength=len(self.palette.colors))
+        counts = np.bincount(lab[lab >= 0], minlength=len(pal.colors))
         for r in self.rows:
             r.refresh()
             r.pct.setText(f"{100 * counts[r.idx] / tot:.0f}%")
-        n = len(self.palette.active())
+        owned = np.zeros(len(pal.colors), int)
+        np.add.at(owned, [pal.resolve(i) for i in range(len(pal.colors))], counts)
+        # why: build_masks drops empty colors, so the count must not promise a filament export omits
+        n = sum(1 for i in pal.active() if i == pal.base_index or owned[i])
         warn = "  ⚠ mais que 4 cores = mais que um AMS." if n > 4 else ""
         self.lbl_colors.setText(f"{n} filamento(s) no projeto.{warn}")
 
