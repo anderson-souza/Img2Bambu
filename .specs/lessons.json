@@ -1,0 +1,99 @@
+{
+  "schema": 1,
+  "promote_threshold": 2,
+  "window_days": 45,
+  "quarantine_threshold": 2,
+  "next_id": 6,
+  "lessons": [
+    {
+      "id": "L-001",
+      "key": "surviving_mutant::assert the per item values a view hands to its scene e g colour not only the item count",
+      "text": "Assert the per-item values a view hands to its scene (e.g. colour), not only the item count",
+      "signal": "surviving_mutant",
+      "scope": "gui",
+      "status": "candidate",
+      "features": [
+        "preview-3d"
+      ],
+      "recurrence": 1,
+      "harmful": 0,
+      "evidence": [
+        "validation.md M9 (img2bambu/gui/view3d.py:79) (gui)"
+      ],
+      "created": "2026-10-23T03:22:40Z",
+      "last_seen": "2026-10-23T03:22:40Z"
+    },
+    {
+      "id": "L-002",
+      "key": "surviving_mutant::test stale tag discarding on both the success and the failure signal of every tagged task",
+      "text": "Test stale-tag discarding on both the success and the failure signal of every tagged task",
+      "signal": "surviving_mutant",
+      "scope": "gui",
+      "status": "candidate",
+      "features": [
+        "preview-3d"
+      ],
+      "recurrence": 1,
+      "harmful": 0,
+      "evidence": [
+        "validation.md M10 (img2bambu/gui/main_window.py:429) (gui)"
+      ],
+      "created": "2026-10-23T03:22:41Z",
+      "last_seen": "2026-10-23T03:22:41Z"
+    },
+    {
+      "id": "L-003",
+      "key": "spec_precision_gap::every edge case listed in the tasks coverage matrix must have a spec defined outcome",
+      "text": "Every edge case listed in the tasks coverage matrix must have a spec-defined outcome",
+      "signal": "spec_precision_gap",
+      "scope": "",
+      "status": "candidate",
+      "features": [
+        "preview-3d"
+      ],
+      "recurrence": 1,
+      "harmful": 0,
+      "evidence": [
+        "validation.md Gap 6 (empty model; tasks.md coverage matrix)"
+      ],
+      "created": "2026-10-23T03:22:42Z",
+      "last_seen": "2026-10-23T03:22:42Z"
+    },
+    {
+      "id": "L-004",
+      "key": "ac_gap::give every spec edge case its own test even when code review suggests it is low risk",
+      "text": "Give every spec edge case its own test, even when code review suggests it is low risk",
+      "signal": "ac_gap",
+      "scope": "",
+      "status": "candidate",
+      "features": [
+        "preview-3d"
+      ],
+      "recurrence": 1,
+      "harmful": 0,
+      "evidence": [
+        "validation.md Gap 3 (edge cases: export concurrent, >4 parts)"
+      ],
+      "created": "2026-10-23T03:22:49Z",
+      "last_seen": "2026-10-23T03:22:49Z"
+    },
+    {
+      "id": "L-005",
+      "key": "surviving_mutant::make concurrency tests hold the concurrent task open with an explicit sync primitive instead of relying on timing",
+      "text": "Make concurrency tests hold the concurrent task open with an explicit sync primitive instead of relying on timing",
+      "signal": "surviving_mutant",
+      "scope": "gui",
+      "status": "candidate",
+      "features": [
+        "preview-3d"
+      ],
+      "recurrence": 1,
+      "harmful": 0,
+      "evidence": [
+        "validation.md M17 (tests/test_gui_preview3d.py:231) (gui)"
+      ],
+      "created": "2026-10-23T03:28:58Z",
+      "last_seen": "2026-10-23T03:28:58Z"
+    }
+  ]
+}

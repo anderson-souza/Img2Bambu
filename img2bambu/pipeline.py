@@ -31,6 +31,10 @@ def render(an, palette: Palette, params: Params):
     return sil_m, masks, segment.preview(sil_m, masks, palette)
 
 
+def model(an, palette: Palette, params: Params):
+    return geometry.build_parts(*segment.build_masks(an, palette, params), palette, params)
+
+
 def export(an, palette: Palette, params: Params, outdir, basename, choice: BambuChoice = None,
            db: bambu.PresetDB = None, progress=lambda pct, msg: None):
     os.makedirs(outdir, exist_ok=True)

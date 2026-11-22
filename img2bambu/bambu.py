@@ -100,14 +100,25 @@ class PresetDB:
         fil = (m.get("default_filament_profile") or [None])[0]
         return m.get("default_print_profile"), fil
 
-    def bed_center(self, machine):
-        area = self.resolve("machine", machine).get("printable_area") or []
+    def bed(self, machine):
+        m = self.resolve("machine", machine)
         try:
-            pts = [tuple(float(v) for v in a.split("x")) for a in area]
+            pts = [tuple(float(v) for v in a.split("x")) for a in m.get("printable_area") or []]
             xs, ys = [p[0] for p in pts], [p[1] for p in pts]
-            return (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
-        except (ValueError, IndexError):
+            area = min(xs), min(ys), max(xs), max(ys)
+        except (ValueError, IndexError, AttributeError):
+            return None
+        try:
+            height = float(m["printable_height"])
+        except (KeyError, TypeError, ValueError):
+            height = None
+        return (*area, height)
+
+    def bed_center(self, machine):
+        b = self.bed(machine)
+        if b is None:
             return 128.0, 128.0
+        return (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
 
 
 def _run(exe, args, timeout=900):
