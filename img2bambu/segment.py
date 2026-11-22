@@ -125,6 +125,26 @@ def assign(an: Analysis, palette: Palette):
     return labels
 
 
+def carry_over(old, new):
+    """New palette from a re-analysis: each edited row of the same image replaces the nearest new row."""
+    if old is None or not old.edited:
+        return new
+    edited = sorted(old.edited)
+    a = _to_lab(np.array([tuple(old.samples[i]) for i in edited]))
+    b = _to_lab(np.array([tuple(s) for s in new.samples]))
+    d = ((a[:, None, :] - b[None, :, :]) ** 2).sum(-1)
+    used_old, used_new = set(), set()
+    # why: k-means re-sorts rows dark -> light, so position does not identify a color across runs
+    for k in np.argsort(d, axis=None, kind="stable"):
+        oi, nj = divmod(int(k), len(new.samples))
+        if oi in used_old or nj in used_new:
+            continue
+        used_old.add(oi); used_new.add(nj)
+        new.colors[nj], new.samples[nj] = old.colors[edited[oi]], old.samples[edited[oi]]
+        new.edited.add(nj)
+    return new
+
+
 def mm_per_px(an: Analysis, params: Params):
     return params.width_mm / an.sil.shape[1]
 

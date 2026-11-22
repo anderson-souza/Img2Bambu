@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import bambu, pipeline, preview3d, segment
-from ..params import Params, carry_over, hex_color
+from ..params import Params, hex_color
 from .view3d import View3D
 from .worker import Task
 
@@ -333,7 +333,7 @@ class MainWindow(QMainWindow):
         if tag != self.req:
             return
         keep = None if self.fresh_image else self.palette
-        self.analysis, self.palette, self.fresh_image = an, carry_over(keep, an.palette), False
+        self.analysis, self.palette, self.fresh_image = an, segment.carry_over(keep, an.palette), False
         if an.note:
             self.log_msg(an.note)
         self.build_rows()
@@ -361,10 +361,10 @@ class MainWindow(QMainWindow):
         for r in self.rows:
             r.refresh()
             r.pct.setText(f"{100 * counts[r.idx] / tot:.0f}%")
-        owned = np.zeros(len(pal.colors), int)
-        np.add.at(owned, [pal.resolve(i) for i in range(len(pal.colors))], counts)
-        # why: build_masks drops empty colors, so the count must not promise a filament export omits
-        n = sum(1 for i in pal.active() if i == pal.base_index or owned[i])
+
+    def show_count(self, masks):
+        # why: counted from the masks export builds, so cleaned-away colors are not promised
+        n = 1 + len(masks)
         warn = "  ⚠ mais que 4 cores = mais que um AMS." if n > 4 else ""
         self.lbl_colors.setText(f"{n} filamento(s) no projeto.{warn}")
 
@@ -419,6 +419,7 @@ class MainWindow(QMainWindow):
         if tag != self.req:
             return
         self.view_prev.set_image(out[2])
+        self.show_count(out[1])
         self.status("Prévia pronta. Ajuste as cores ou clique em Gerar 3MF.")
 
     def tab_changed(self, i):

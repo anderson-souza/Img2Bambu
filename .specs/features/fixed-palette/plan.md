@@ -1,9 +1,9 @@
 # Fixed palette (cor na imagem × cor do filamento)
 
 **Approved**: 2026-11-22 - user: "Aprovado"
-**Settled mid-build:** none
-**Review:** <pending>
-**Fix pass:** <pending>
+**Settled mid-build:** criterion 9 (after review finding 1: positions shift when k-means re-sorts, pink was lost at N 4→5) - user chose "Pela cor mais próxima (Recomendado)": each edited row replaces the new k-means row whose "cor na imagem" is nearest in LAB, no row reused; edited rows beyond the new N are dropped
+**Review:** sent at 7ddadac
+**Fix pass:** done - finding 1: carry-over now matches edited rows to the nearest new row (user decision, criterion 9 rewritten; moved to `segment.carry_over`); finding 2: filament count taken from the masks the preview built, so cleaned-away colors are not counted; finding 4: Out-of-scope reason for Bambu preset colors corrected; finding 5: test with criterion 2 example pixel added; finding 3 (0.08% boundary shift once a sample is edited) left as is - spec only requires exactness when nothing is edited
 
 ## Problem
 
@@ -109,11 +109,12 @@ Changing "Nº de cores", "Fundo" or "Tolerância do fundo" does not throw away r
 
 **Acceptance Criteria**
 
-9. WHEN the analysis re-runs for the same image THEN the system SHALL keep both colors of each
-   row with index < new N that the user edited (either swatch); unedited rows SHALL take the new k-means
-   values; rows with index ≥ new N SHALL be dropped
-   - N 4→6 with row 3 edited → rows 0-2 and 4-5 from k-means, row 3 as edited; N 4→3 with row 3
-     edited → row 3 dropped, rows 0-2 from k-means
+9. WHEN the analysis re-runs for the same image THEN the system SHALL place each row the user
+   edited (either swatch), with both its colors, on the new k-means row whose "cor na imagem" is
+   nearest to its own in LAB, closest pairs first and no new row used twice; the other rows SHALL
+   take the new k-means values; edited rows left without a new row SHALL be dropped
+   - edited pink row at index 1 of 4, N 4→5 and k-means puts pink at index 2 → the edited pink
+     lands on index 2; three edited rows and N 4→2 → the two closest pairs kept, the third dropped
 10. WHEN the user opens another image THEN every row SHALL start from k-means, with no edits
     carried over
 
@@ -122,7 +123,7 @@ Changing "Nº de cores", "Fundo" or "Tolerância do fundo" does not throw away r
 | Excluded | Why |
 | --- | --- |
 | Eyedropper on the Original tab | proposal 2, a separate feature; Qt's color dialog already offers "Pick Screen Color" where the platform allows |
-| Filament colors taken from Bambu presets | new capability; not asked |
+| Filament colors taken from Bambu presets | the proposal offered them as an alternative ("seletor de cor ou as cores dos presets Bambu"); the color picker covers it, presets left for later |
 | `--palette` CLI flag | user chose GUI only |
 | Remembering colors across sessions | user chose no persistence |
 | Pre-smoothing (mean-shift/bilateral), auto-merge, thin-line protection | proposals 3-5, separate features |
@@ -133,7 +134,7 @@ Changing "Nº de cores", "Fundo" or "Tolerância do fundo" does not throw away r
 | Assumption | Chosen default | Rationale | Confirmed? |
 | --- | --- | --- | --- |
 | How pixels are assigned | two colors per row: "cor na imagem" decides pixels, "cor do filamento" is printed | user's answer: "Duas cores por linha" | y |
-| Edited rows on reanalysis | kept; others from k-means; extras dropped | user's answer: "Manter as ajustadas" | y |
+| Edited rows on reanalysis | kept, matched to the nearest new row; others from k-means; extras dropped | user's answers: "Manter as ajustadas", then "Pela cor mais próxima (Recomendado)" | y |
 | CLI | unchanged, k-means only | user's answer: "Não, só GUI" | y |
 | Persistence | none | user's answer: "Não" | y |
 | A row counts as edited | when either swatch was confirmed, and both colors are then kept together | a filament color without its sample would attach to a different k-means cluster after re-sort | n |

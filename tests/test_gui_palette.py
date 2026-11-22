@@ -107,8 +107,25 @@ def test_reanalysis_keeps_edited_row(qapp, win, monkeypatch):
     win.sp_n.setValue(4)
     settle(qapp, win)
     assert len(win.rows) == 4
-    assert (win.palette.colors[sage], win.palette.samples[sage]) == kept
-    assert win.palette.edited == {sage}
+    (j,) = win.palette.edited
+    assert (win.palette.colors[j], win.palette.samples[j]) == kept
+    assert max(abs(a - b) for a, b in zip(win.analysis.samples[j], SAGE)) <= 3   # landed on the sage row
+    assert sum(1 for c in win.palette.colors if c == (255, 255, 255)) == 1
+
+
+def test_count_follows_built_masks(qapp, win, monkeypatch):
+    load_sg(qapp, win)
+    real = main_window.pipeline.render
+
+    def drop_one(an, pal, params):
+        sil_m, masks, img = real(an, pal, params)
+        masks.pop(next(iter(masks)))                   # a color cleaned away despite having pixels
+        return sil_m, masks, img
+    monkeypatch.setattr(main_window.pipeline, "render", drop_one)
+    win.sp_relief.setValue(2.0)
+    settle(qapp, win)
+    assert all(r.pct.text() != "0%" for r in win.rows)
+    assert win.lbl_colors.text().startswith("2 filamento(s)")
 
 
 def test_new_image_starts_fresh(qapp, win, monkeypatch, tmp_path):

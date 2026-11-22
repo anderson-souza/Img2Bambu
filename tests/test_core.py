@@ -213,6 +213,17 @@ def test_unedited_rows_keep_kmeans_split():
     assert not (labels == far).any()
 
 
+def test_criterion_example_pixel_goes_to_nearest_sample():
+    img = sage_green()
+    img[100:110, 100:110] = (214, 212, 178, 255)
+    an = segment.analyze(img, Params(width_mm=100, n_colors=3))
+    pal = an.palette
+    sage, green = _row_of(an, SAGE), _row_of(an, GREEN)
+    pal.samples[sage], pal.samples[green] = SAGE, GREEN
+    pal.colors[sage] = (255, 255, 255)
+    assert segment.assign(an, pal)[105 - 20, 105 - 20] == sage
+
+
 def test_equal_samples_tie_goes_to_lower_index():
     an = segment.analyze(sage_green(), Params(width_mm=100, n_colors=3))
     pal = an.palette
@@ -253,19 +264,32 @@ def bambu_hex(c):
     return hex_color(c)
 
 
-def _pal(n, edited=()):
+def _pal(samples, edited=()):
     from img2bambu.params import Palette
-    return Palette(colors=[(i, i, i) for i in range(n)], samples=[(i, 0, 0) for i in range(n)], edited=set(edited))
+    return Palette(colors=[(9, 9, i) for i in range(len(samples))], samples=list(samples), edited=set(edited))
 
 
-def test_carry_over_keeps_edited_rows():
-    from img2bambu.params import carry_over
-    old = _pal(4, {3})
-    old.colors[3], old.samples[3] = (255, 255, 255), (215, 213, 179)
-    grown = carry_over(old, _pal(6))
-    assert grown.colors[3] == (255, 255, 255) and grown.samples[3] == (215, 213, 179)
-    assert grown.edited == {3}
-    assert [grown.colors[i] for i in (0, 1, 2, 4, 5)] == [(i, i, i) for i in (0, 1, 2, 4, 5)]
-    shrunk = carry_over(old, _pal(3))
-    assert shrunk.colors == [(i, i, i) for i in range(3)] and shrunk.edited == set()
-    assert carry_over(None, _pal(3)).colors == [(i, i, i) for i in range(3)]
+DARK, PINK, LIGHT = (90, 90, 55), (220, 140, 150), (240, 240, 230)
+
+
+def test_carry_over_follows_color_not_position():
+    old = _pal([DARK, PINK, GREEN, LIGHT], {1})
+    old.colors[1] = (255, 0, 128)
+    # k-means at N=5 re-sorted: pink-ish now sits at index 2
+    new = segment.carry_over(old, _pal([DARK, (130, 130, 85), (215, 145, 152), GREEN, LIGHT]))
+    assert new.colors[2] == (255, 0, 128) and new.samples[2] == PINK
+    assert new.edited == {2}
+    assert [new.colors[i] for i in (0, 1, 3, 4)] == [(9, 9, i) for i in (0, 1, 3, 4)]
+
+
+def test_carry_over_no_row_reused_and_extras_dropped():
+    old = _pal([DARK, PINK, GREEN, LIGHT], {0, 1, 3})
+    new = segment.carry_over(old, _pal([(100, 95, 60), (230, 235, 225)]))
+    assert new.samples == [DARK, LIGHT]                  # the two closest pairs; pink dropped
+    assert new.edited == {0, 1}
+
+
+def test_carry_over_without_edits_is_fresh():
+    fresh = _pal([DARK, PINK])
+    assert segment.carry_over(None, fresh) is fresh
+    assert segment.carry_over(_pal([LIGHT]), fresh).samples == [DARK, PINK]
