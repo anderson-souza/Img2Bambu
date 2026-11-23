@@ -162,8 +162,8 @@ class MainWindow(QMainWindow):
         self.view3d = View3D()
         self.tabs.addTab(self.view3d, "3D")
         self.tabs.currentChanged.connect(self.tab_changed)
-        self.view_orig.picked.connect(lambda y, x: self.pick_at(y - self.analysis.offset[0], x - self.analysis.offset[1]))
-        self.view_prev.picked.connect(lambda y, x: self.pick_at(y // self.params.upsample, x // self.params.upsample))
+        self.view_orig.picked.connect(lambda y, x: self.pick_from(self.view_orig, y, x))
+        self.view_prev.picked.connect(lambda y, x: self.pick_from(self.view_prev, y, x))
         self.esc = QShortcut(QKeySequence(Qt.Key_Escape), self, self.cancel_pick)
         self.esc.setEnabled(False)
         split.addWidget(self.tabs)
@@ -429,7 +429,10 @@ class MainWindow(QMainWindow):
         for v in (self.view_orig, self.view_prev):
             v.set_picking(True)
         self.esc.setEnabled(True)
-        self.status(f"Clique na imagem para definir a cor na imagem da cor {i + 1} (Esc cancela).")
+        self.status(self.pick_hint())
+
+    def pick_hint(self):
+        return f"Clique na imagem para definir a cor na imagem da cor {self.pick_row + 1} (Esc cancela)."
 
     def disarm(self):
         self.pick_row = None
@@ -445,11 +448,23 @@ class MainWindow(QMainWindow):
         self.disarm()
         self.status("Conta-gotas cancelado.")
 
+    def pick_from(self, view, y, x):
+        if self.pick_row is None or self.analysis is None:
+            return
+        pm = view.item.pixmap()
+        h, w = self.rgba.shape[:2] if view is self.view_orig else (pm.height(), pm.width())
+        if not (0 <= y < h and 0 <= x < w):
+            # why: the 5x5 window of a click just past the image edge would still reach the object
+            self.status("Clique dentro do objeto.")
+            return
+        if view is self.view_orig:
+            self.pick_at(y - self.analysis.offset[0], x - self.analysis.offset[1])
+        else:
+            self.pick_at(y // self.params.upsample, x // self.params.upsample)
+
     def pick_at(self, y, x):
         # invariant: (y, x) is a pixel of the cropped analysis image
         i = self.pick_row
-        if i is None or self.analysis is None:
-            return
         rgb = segment.sample_at(self.analysis, y, x)
         if rgb is None:
             self.status("Clique dentro do objeto.")
@@ -490,7 +505,9 @@ class MainWindow(QMainWindow):
             return
         self.view_prev.set_image(out[2])
         self.show_count(out[1])
-        self.status("Prévia pronta. Ajuste as cores ou clique em Gerar 3MF.")
+        # why: a preview from an earlier pick must not hide the hint of the pick still armed
+        self.status(self.pick_hint() if self.pick_row is not None
+                    else "Prévia pronta. Ajuste as cores ou clique em Gerar 3MF.")
 
     def tab_changed(self, i):
         if self.tabs.widget(i) is self.view3d and self.dirty3d and self.analysis is not None:

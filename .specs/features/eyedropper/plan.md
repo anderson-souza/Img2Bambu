@@ -2,8 +2,8 @@
 
 **Approved**: 2026-11-22 - user: "plano aprovado"
 **Settled mid-build:** none
-**Review:** <pending>
-**Fix pass:** <pending>
+**Review:** sent at 9a58378
+**Fix pass:** done - finding 1: preview_done keeps the armed-pick hint instead of "Prévia pronta…"; finding 2: clicks outside the shown image (Original: loaded image, Prévia: preview pixmap) are rejected with "Clique dentro do objeto." before sampling; finding 3: tests for unarmed drag-pans + double-click-fit (criterion 8) and floor-not-round preview mapping (criterion 11); finding 4: the new eyedropper test uses a temp QSettings (pre-existing `test_new_image_starts_fresh` still writes `dir`, left as is - outside this feature); minor notes (double-click while armed refits, .5 rounding to even, pick armed during a pending analysis) left as is
 
 ## Problem
 
