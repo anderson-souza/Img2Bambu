@@ -452,3 +452,108 @@ def test_cli_smooth_out_of_range_exits_2(monkeypatch, capsys, bad):
         cli.main(["missing.png", "--smooth", bad])
     assert e.value.code == 2 and called == []
     assert "--smooth" in capsys.readouterr().err
+
+
+def stripes(tones):
+    """1000x50 horizontal stripes on a transparent border; tones = [(L, a, b) real LAB, share %], dark -> light."""
+    rows = []
+    for (L, a, b), pct in tones:
+        rgb = segment._to_rgb(np.array([[L * 255 / 100, a + 128, b + 128]], np.float32))[0]
+        rows += [rgb] * (pct * 10)
+    img = np.zeros((len(rows) + 20, 70, 4), np.uint8)
+    img[10:-10, 10:-10, :3] = np.array(rows, np.uint8)[:, None, :]
+    img[10:-10, 10:-10, 3] = 255
+    return img
+
+
+def _acyclic(pal):
+    act = set(pal.active())
+    return all(pal.resolve(i) in act for i in range(len(pal.colors)))
+
+
+def test_filaments_defaults_off():
+    assert Params().filaments == 0
+
+
+def test_filaments_zero_is_todays_analysis():
+    img = sage_green()
+    an = segment.analyze(img, Params(n_colors=4))
+    sil, _ = segment.silhouette(img, Params())
+    rgba, sil, _ = segment._crop(img, sil)
+    labels, colors, centers, _ = segment.kmeans_palette(rgba, sil, 4)
+    assert an.palette.merges == {}
+    assert an.palette.base_index == segment.suggest_base(labels, sil, 4) == an.base
+    assert np.array_equal(an.labels, labels) and an.palette.colors == colors
+    assert an.palette.samples == segment._to_rgb(centers)
+
+
+EIGHT = [((10 + 11 * i, 0, 0), 12 if i < 4 else 13) for i in range(8)]
+
+
+@pytest.mark.parametrize("n,merged", [(8, 0), (9, 0), (7, 1), (0, 0)])
+def test_filaments_at_or_above_rows_merges_nothing(n, merged):
+    an = segment.analyze(stripes(EIGHT), Params(n_colors=8, filaments=n))
+    assert len(an.palette.colors) == 8
+    assert len(an.palette.merges) == merged
+
+
+@pytest.mark.parametrize("m", range(1, 8))
+def test_filaments_leaves_exactly_m_active(m):
+    pal = segment.analyze(stripes(EIGHT), Params(n_colors=8, filaments=m)).palette
+    assert len(pal.active()) == m
+    assert _acyclic(pal)
+    assert pal.base_index in pal.active()
+
+
+def test_closest_pair_merges_into_larger():
+    # A 40%, A' (ΔE 5 from A) 10%, B 50%
+    an = segment.analyze(stripes([((40, 0, 0), 40), ((45, 0, 0), 10), ((80, 0, 0), 50)]),
+                         Params(n_colors=3, filaments=2))
+    assert an.palette.merges == {1: 0}
+
+
+def test_small_distinct_color_survives_close_large_ones_merge():
+    # C 30% and C' 30% close; D 2% far from all; E 38% far
+    tones = [((20, 0, 0), 30), ((26, 0, 0), 30), ((55, 60, 0), 2), ((85, 0, 0), 38)]
+    pal = segment.analyze(stripes(tones), Params(n_colors=4, filaments=3)).palette
+    assert pal.merges == {1: 0}                 # equal shares -> lower label survives
+    assert 2 in pal.active()
+
+
+def test_group_centroid_is_share_weighted():
+    # after X(49%)+Y(1%) merge, the weighted centroid stays near X (L≈10.4): Z is closer to Q (37) than
+    # to the group (≈41.6), so Z+Q merge; an unweighted centroid (L=20, 32 away) would take Z instead
+    tones = [((10, 0, 0), 49), ((30, 0, 0), 1), ((52, 0, 0), 25), ((89, 0, 0), 25)]
+    pal = segment.analyze(stripes(tones), Params(n_colors=4, filaments=2)).palette
+    assert pal.merges == {1: 0, 3: 2}
+
+
+def test_merged_base_moves_to_survivor():
+    # disc L40 with a thin L44 outline (the suggested base) and a light L80 square
+    gray = [segment._to_rgb(np.array([[L * 255 / 100, 128, 128]], np.float32))[0] for L in (40, 44, 80)]
+    img = np.zeros((300, 300, 4), np.uint8)
+    yy, xx = np.mgrid[:300, :300]
+    r2 = (yy - 150) ** 2 + (xx - 150) ** 2
+    img[r2 < 140 ** 2] = (*gray[1], 255)
+    img[r2 < 134 ** 2] = (*gray[0], 255)
+    img[100:200, 100:200] = (*gray[2], 255)
+    an = segment.analyze(img, Params(n_colors=3, filaments=2))
+    assert an.base == 1
+    assert an.palette.merges == {1: 0}
+    assert an.palette.base_index == 0 and 0 in an.palette.active()
+
+
+def test_auto_merge_is_deterministic():
+    p = Params(n_colors=6, filaments=3)
+    a, b = segment.analyze(sage_green(), p), segment.analyze(sage_green(), p)
+    assert a.palette.merges == b.palette.merges and a.palette.base_index == b.palette.base_index
+    assert _acyclic(a.palette)
+
+
+def test_distance_is_cielab_not_opencv_scaled():
+    # A–B differ by ΔL 10 (ΔE 10); A–C by Δa 20 (ΔE 20). OpenCV's 8-bit L (×2.55) would make A–B 25.5
+    tones = [((50, 0, 0), 40), ((50, 20, 0), 30), ((60, 0, 0), 30)]
+    an = segment.analyze(stripes(tones), Params(n_colors=3, filaments=2))
+    a, c, b = (_row_of(an, segment._to_rgb(np.array([[L * 2.55, x + 128, y + 128]], np.float32))[0])
+               for (L, x, y), _ in tones)
+    assert an.palette.merges == {b: a}
