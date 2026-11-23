@@ -420,3 +420,34 @@ def test_smooth_keeps_original_image_for_eyedropper():
     y, x = 100 - oy, 100 - ox
     want = tuple(int(v) for v in np.round(img[98:103, 98:103, :3].astype(float).mean((0, 1))))
     assert segment.sample_at(an, y, x) == want
+
+
+def _cli(monkeypatch, tmp_path, *extra):
+    from PIL import Image
+    from img2bambu import __main__ as cli
+    img = tmp_path / "g.png"
+    Image.fromarray(synthetic()).save(img)
+    seen, real = [], segment.analyze
+    monkeypatch.setattr(cli.segment, "analyze", lambda path, p: (seen.append(p.smooth), real(path, p))[1])
+    assert cli.main([str(img), "--stl-only", "--out", str(tmp_path / "out"), *extra]) == 0
+    return seen
+
+
+def test_cli_smooth_flag(monkeypatch, tmp_path):
+    assert _cli(monkeypatch, tmp_path, "--smooth", "5") == [5]
+
+
+def test_cli_smooth_defaults_to_zero(monkeypatch, tmp_path):
+    assert _cli(monkeypatch, tmp_path) == [0]
+
+
+@pytest.mark.parametrize("bad", ["6", "-1", "1.5", "x"])
+def test_cli_smooth_out_of_range_exits_2(monkeypatch, capsys, bad):
+    from img2bambu import __main__ as cli
+    called = []
+    monkeypatch.setattr(cli.segment, "load_image", lambda *a: called.append(a))
+    monkeypatch.setattr(cli.segment, "analyze", lambda *a: called.append(a))
+    with pytest.raises(SystemExit) as e:
+        cli.main(["missing.png", "--smooth", bad])
+    assert e.value.code == 2 and called == []
+    assert "--smooth" in capsys.readouterr().err

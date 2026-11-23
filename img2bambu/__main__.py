@@ -14,6 +14,8 @@ def main(argv=None):
     ap.add_argument("--base", type=float, default=10.0)
     ap.add_argument("--relief", type=float, default=1.0)
     ap.add_argument("--colors", type=int, default=3)
+    ap.add_argument("--smooth", type=int, default=0, choices=range(6), metavar="0-5",
+                    help="suavização (mean-shift) antes de detectar as cores; 0 = desligado")
     ap.add_argument("--printer", default="Bambu Lab A1 0.4 nozzle")
     ap.add_argument("--process", default=None)
     ap.add_argument("--filament", default=None)
@@ -21,7 +23,7 @@ def main(argv=None):
     ap.add_argument("--stl-only", action="store_true")
     a = ap.parse_args(argv)
 
-    params = Params(width_mm=a.width, base_mm=a.base, relief_mm=a.relief, n_colors=a.colors)
+    params = Params(width_mm=a.width, base_mm=a.base, relief_mm=a.relief, n_colors=a.colors, smooth=a.smooth)
     an = segment.analyze(a.image, params)
     if an.note:
         print(an.note)
