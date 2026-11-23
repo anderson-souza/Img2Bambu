@@ -424,6 +424,7 @@ def test_smooth_keeps_original_image_for_eyedropper():
 
 def _cli(monkeypatch, tmp_path, *extra):
     from PIL import Image
+
     from img2bambu import __main__ as cli
     img = tmp_path / "g.png"
     Image.fromarray(synthetic()).save(img)
