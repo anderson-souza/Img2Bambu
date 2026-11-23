@@ -17,6 +17,7 @@ class Analysis:
     centers: np.ndarray = None   # k-means centers in LAB, label order
     lab: np.ndarray = None       # LAB of silhouette pixels, in sil order
     samples: tuple = ()          # initial palette.samples (centers as RGB)
+    offset: tuple = (0, 0)       # (y0, x0) of the crop inside the loaded image
 
 
 def load_image(path):
@@ -48,7 +49,7 @@ def _crop(rgba, sil):
     if len(xs) == 0:
         raise ValueError("Nenhum pixel do objeto encontrado (imagem vazia ou fundo não removido).")
     y0, y1, x0, x1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
-    return rgba[y0:y1, x0:x1].copy(), sil[y0:y1, x0:x1].copy()
+    return rgba[y0:y1, x0:x1].copy(), sil[y0:y1, x0:x1].copy(), (int(y0), int(x0))
 
 
 def _to_lab(rgb_rows):
@@ -99,12 +100,25 @@ def suggest_streak(colors):
 def analyze(path_or_rgba, params: Params):
     rgba = load_image(path_or_rgba) if isinstance(path_or_rgba, str) else path_or_rgba
     sil, note = silhouette(rgba, params)
-    rgba, sil = _crop(rgba, sil)
+    rgba, sil, offset = _crop(rgba, sil)
     labels, colors, centers, lab = kmeans_palette(rgba, sil, params.n_colors)
     samples = _to_rgb(centers)
     pal = Palette(colors=colors, base_index=suggest_base(labels, sil, len(colors)),
                   streak=suggest_streak(colors), samples=list(samples))
-    return Analysis(rgba, sil, labels, pal, note, centers, lab, tuple(samples))
+    return Analysis(rgba, sil, labels, pal, note, centers, lab, tuple(samples), offset)
+
+
+def sample_at(an: Analysis, y, x, r=2):
+    """Mean RGB of the silhouette pixels in the (2r+1)² window at cropped (y, x); None if there are none."""
+    h, w = an.sil.shape
+    y0, y1, x0, x1 = max(0, y - r), min(h, y + r + 1), max(0, x - r), min(w, x + r + 1)
+    if y0 >= y1 or x0 >= x1:
+        return None
+    inside = an.sil[y0:y1, x0:x1]
+    if not inside.any():
+        return None
+    px = an.rgba[y0:y1, x0:x1, :3][inside].astype(np.float64)
+    return tuple(int(v) for v in np.round(px.mean(0)))
 
 
 def assign(an: Analysis, palette: Palette):
