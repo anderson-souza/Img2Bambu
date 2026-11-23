@@ -30,6 +30,9 @@ Img2Bambu: PNG/JPG image → multicolor 3MF project for Bambu Studio. Output = o
   - `slow` test slices a real image via the Bambu Studio CLI; it is auto-skipped unless Bambu Studio is installed and `../new abelha/Mascote Abelha com Placa ABELHÃO.png` exists (outside the repo).
 - Lint: `python -m ruff check .` (config in `pyproject.toml`; `ruff format` is intentionally not used).
 - GUI smoke (headless, offscreen Qt): `python tests/gui_smoke.py <image> <outdir> <screenshot.png>`
+- GUI tests: reuse the fixtures in `tests/test_gui_preview3d.py` (`win`, `settle`) and `tests/test_gui_palette.py` (`load_sg`, `answer`). End each test with `settle` (a task outliving the window raises "Signal source has been deleted").
+  - hazard: an unstubbed `QMessageBox`/`QColorDialog`/`QFileDialog` blocks the offscreen run forever; monkeypatch it and run pytest under `timeout`.
+  - hazard: `generate()` and `open_image()` write the real `QSettings`; tests and scripts must set `w.settings = QSettings(<tmp ini>, QSettings.IniFormat)`. `tests/gui_smoke.py` does not, so it overwrites the user's saved presets.
 - Build exe: `python -m PyInstaller --noconfirm img2bambu.spec` → `dist\Img2Bambu\` (ship whole folder). `build/` and `dist/` are artifacts.
 
 ## Architecture
@@ -48,6 +51,10 @@ Key state: `Params` (user dimensions/tuning) and `Palette` (colors, base_index, 
 
 GUI (`gui/main_window.py`, PySide6): long work runs as `gui/worker.Task` (QRunnable on the global QThreadPool); each task carries a `tag` so stale analysis/preview results are discarded. Settings persisted with `QSettings`.
 
+Undo (Ctrl+Z, groups 2 and 3 only; `history.py`, AD-002 in `.specs/STATE.md`): a new numeric field goes into `MainWindow.fields`; a palette edit ends in `palette_changed(<label>)`; group 1 changes and opening an image call `forget_history`.
+
+invariant: detection and 2D preview share the tag `self.req`; never bump it while `self.detecting`, except to cancel the detection on purpose, or its result is dropped silently.
+
 ## Bambu Studio CLI quirks
 
 Deliberate workarounds that look like bugs — see `.claude/rules/bambu-cli.md` (auto-loaded when editing `bambu.py`, `export3mf.py`, `pipeline.py`). Do not "fix" them away.
@@ -56,3 +63,4 @@ Deliberate workarounds that look like bugs — see `.claude/rules/bambu-cli.md` 
 
 - Comments are sparse and prefixed `why:`, `hazard:` or `invariant:` — no narration comments.
 - Error/progress messages shown to users are Portuguese.
+- Commits: Conventional Commits, lowercase description, `Co-Authored-By` trailer (so `check_commit.py --allow-trailers`). Stage explicit paths: `.claude/worktrees/` may hold another session's worktree.
