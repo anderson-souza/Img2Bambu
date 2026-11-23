@@ -3,9 +3,10 @@ import os
 import subprocess
 
 import numpy as np
-from PySide6.QtCore import QSettings, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtCore import QEvent, QSettings, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtGui import QColor, QImage, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
     QButtonGroup,
     QCheckBox,
     QColorDialog,
@@ -35,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import bambu, pipeline, preview3d, segment
+from ..history import History
 from ..params import Params, hex_color
 from .view3d import View3D
 from .worker import Task
@@ -172,6 +174,8 @@ class MainWindow(QMainWindow):
         self.last_project = None
         self.db = None
         self.pick_row = None
+        self.history = History()
+        self.undone = None              # label of the undo still shown in the status bar
 
         self.debounce = QTimer(self, singleShot=True, interval=350)
         self.debounce.timeout.connect(self.run_preview)
@@ -203,6 +207,15 @@ class MainWindow(QMainWindow):
         split.addWidget(scroll)
         split.setStretchFactor(0, 3); split.setStretchFactor(1, 2)
         self.setCentralWidget(split)
+        self.fields = {
+            "Largura": self.sp_w, "Espessura da base": self.sp_base, "Relevo das cores": self.sp_relief,
+        }
+        for label, sp in self.fields.items():
+            sp.valueChanged.connect(lambda _, label=label: self.record(label, key=label))
+        self.last = self.snapshot()
+        QShortcut(QKeySequence("Ctrl+Z"), self, self.undo)
+        for sp in self.findChildren(QAbstractSpinBox):
+            sp.installEventFilter(self)
         self.statusBar().showMessage("Abra uma imagem para começar.")
         QTimer.singleShot(0, self.load_presets)
 
@@ -552,6 +565,7 @@ class MainWindow(QMainWindow):
         self.show_count(out[1])
         # why: a preview from an earlier pick must not hide the hint of the pick still armed
         self.status(self.pick_hint() if self.pick_row is not None
+                    else f"Desfeito: {self.undone}." if self.undone
                     else "Prévia pronta. Ajuste as cores ou clique em Gerar 3MF.")
 
     def tab_changed(self, i):
@@ -577,6 +591,35 @@ class MainWindow(QMainWindow):
             return
         self.view3d.show_message(msg)
         self.log_msg(f"Erro: {msg}")
+
+    # ---------- undo ----------
+    def eventFilter(self, obj, e):
+        # why: a spin box claims Ctrl+Z for its own text before the window shortcut sees it
+        if e.type() == QEvent.ShortcutOverride and e.matches(QKeySequence.Undo):
+            e.ignore()
+            return True
+        return super().eventFilter(obj, e)
+
+    def snapshot(self):
+        return [sp.value() for sp in self.fields.values()]
+
+    def record(self, label, key=None):
+        before, self.last = self.last, self.snapshot()
+        self.history.record(label, before, self.last, key)
+        self.undone = None
+
+    def undo(self):
+        step = self.history.undo()
+        if step is None:
+            self.status("Nada para desfazer.")
+            return
+        self.undone, values = step
+        for sp, v in zip(self.fields.values(), values, strict=True):
+            sp.blockSignals(True); sp.setValue(v); sp.blockSignals(False)
+        self.debounce.stop()
+        self.run_preview()
+        self.last = self.snapshot()
+        self.status(f"Desfeito: {self.undone}.")
 
     # ---------- export ----------
     def generate(self):
