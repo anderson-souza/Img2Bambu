@@ -1,4 +1,5 @@
 import os
+import subprocess
 
 import pytest
 from test_core import synthetic
@@ -91,3 +92,43 @@ def test_work_files_in_cache_and_removed(linux, monkeypatch, tmp_path, fail):
     cache = linux / ".cache" / "img2bambu"
     assert os.path.samefile(os.path.dirname(seen[0]), cache)
     assert list(cache.iterdir()) == []
+
+
+def export_with(monkeypatch, outdir, exe, code):
+    """Exports with a fake `flatpak` exiting with `code`; returns the probe commands that ran."""
+    ran = []
+
+    def fake_run(args, **kw):
+        ran.append(args)
+        assert os.path.isfile(args[-1]) and os.path.samefile(os.path.dirname(args[-1]), outdir)
+        return subprocess.CompletedProcess(args, code)
+
+    monkeypatch.setattr(bambu.subprocess, "run", fake_run)
+    monkeypatch.setattr(bambu, "export_project", lambda *a, **k: None)
+    p = Params(width_mm=40)
+    an = segment.analyze(synthetic(), p)
+    choice = pipeline.BambuChoice(exe, "m", "p", "f") if exe else None
+    pipeline.export(an, an.palette, p, str(outdir), "t", choice, bambu.PresetDB())
+    return ran
+
+
+def test_flatpak_refuses_unseen_folder(linux, monkeypatch, tmp_path):
+    exe, out = touch(tmp_path / "sys" / FLATPAK), tmp_path / "out"
+    with pytest.raises(RuntimeError) as e:
+        export_with(monkeypatch, out, exe, 1)
+    assert str(e.value) == (f"O Bambu Studio (Flatpak) não acessa a pasta de saída: {out}. "
+                            "Escolha uma dentro da sua pasta pessoal.")
+    assert list(out.iterdir()) == []
+
+
+def test_flatpak_accepts_seen_folder(linux, monkeypatch, tmp_path):
+    out = tmp_path / "out"
+    ran = export_with(monkeypatch, out, touch(tmp_path / "sys" / FLATPAK), 0)
+    assert [r[:4] for r in ran] == [["flatpak", "run", "--command=test", FLATPAK]]
+    assert sorted(f.suffix for f in out.iterdir()) == [".png", ".stl", ".stl", ".stl"]
+
+
+@pytest.mark.parametrize("native", [True, False])
+def test_no_folder_check_without_flatpak(linux, monkeypatch, tmp_path, native):
+    exe = touch(tmp_path / "bin" / "bambu-studio") if native else None
+    assert export_with(monkeypatch, tmp_path / "out", exe, 1) == []

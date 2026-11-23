@@ -38,6 +38,9 @@ def model(an, palette: Palette, params: Params):
 def export(an, palette: Palette, params: Params, outdir, basename, choice: BambuChoice = None,
            db: bambu.PresetDB = None, progress=lambda pct, msg: None):
     os.makedirs(outdir, exist_ok=True)
+    if choice and choice.exe and bambu.is_flatpak(choice.exe) and not bambu.sandbox_sees(outdir):
+        raise RuntimeError(f"O Bambu Studio (Flatpak) não acessa a pasta de saída: {outdir}. "
+                           "Escolha uma dentro da sua pasta pessoal.")
     progress(5, "Separando cores…")
     sil_m, masks, prev = render(an, palette, params)
     progress(30, "Gerando malhas 3D…")

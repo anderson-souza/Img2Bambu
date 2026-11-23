@@ -50,6 +50,18 @@ def presets_root():
     return os.path.join(os.environ.get("APPDATA", ""), "BambuStudio", "system", "BBL")
 
 
+def is_flatpak(exe):
+    return is_linux() and os.path.basename(os.path.realpath(exe)) == FLATPAK_ID
+
+
+def sandbox_sees(folder):
+    """Asks the Flatpak sandbox itself, so permission overrides are respected."""
+    # hazard: the sandbox has its own /tmp, so the folder may exist there with other contents; test a file instead
+    with tempfile.NamedTemporaryFile(prefix=".img2bambu_", dir=folder) as f:
+        r = _run("flatpak", ["run", "--command=test", FLATPAK_ID, "-r", os.path.abspath(f.name)], timeout=60)
+    return r.returncode == 0
+
+
 def work_dir():
     if not is_linux():
         return tempfile.mkdtemp(prefix="img2bambu_")
