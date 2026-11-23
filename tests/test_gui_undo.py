@@ -1,17 +1,22 @@
 import copy
+import threading
 
 import pytest
-from PySide6.QtCore import Qt
+from PIL import Image
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtTest import QTest
-from test_core import GREEN, PATCH, SAGE
+from test_core import GREEN, PATCH, SAGE, synthetic
 from test_gui_palette import answer, load_sg, pcts, preview_px, row_of
 from test_gui_preview3d import calls, load, presets, settle, win  # noqa: F401 — why: shared fixtures
+
+from img2bambu import pipeline, segment
+from img2bambu.gui import main_window
 
 NOTHING = "Nada para desfazer."
 
 
 @pytest.fixture
-def slow(win):
+def slow(qapp, win):
     """Every change is 10 s after the previous one, so nothing groups by time."""
     t = [0.0]
 
@@ -19,7 +24,8 @@ def slow(win):
         t[0] += 10
         return t[0]
     win.history.clock = clock
-    return win
+    yield win
+    settle(qapp, win)
 
 
 def press(qapp, w, target=None):
@@ -188,6 +194,7 @@ def test_color_rows_never_group(qapp, win):
     load_sg(qapp, win)
     win.history.clock = lambda: 1.0
     win.rows[0].streak.click(); win.rows[0].streak.click()
+    settle(qapp, win)
     assert len(win.history.steps) == 2
 
 
@@ -225,3 +232,160 @@ def test_undo_disarms_the_eyedropper(qapp, slow):
     settle(qapp, w)
     assert w.pick_row is None and not w.view_prev.picking and not w.rows[0].drop.isChecked()
     assert msg(w) == "Desfeito: Largura."
+
+
+@pytest.fixture
+def analyses(monkeypatch):
+    """Records n_colors of each detection; `gate` holds detections back while cleared."""
+    seen, gate, real = [], threading.Event(), segment.analyze
+    gate.set()
+
+    def fake(rgba, params):
+        seen.append(params.n_colors)
+        gate.wait(30)
+        return real(rgba, params)
+    monkeypatch.setattr(segment, "analyze", fake)
+    yield seen, gate
+    gate.set()
+
+
+@pytest.mark.parametrize("name, value, label", [
+    ("sp_n", 5, "Nº de cores"), ("sp_fil", 2, "Filamentos"), ("sp_smooth", 3, "Suavização")])
+def test_detection_field_undo_brings_manual_work_back(qapp, slow, analyses, monkeypatch, name, value, label):
+    w = slow
+    load_sg(qapp, w)
+    w.sp_n.setValue(4)
+    settle(qapp, w)
+    answer(monkeypatch, (1, 2, 250), [])
+    w.rows[0].swatch.click()
+    w.rows[2].merge.setCurrentIndex(w.rows[2].merge.findData(3))
+    w.rows[1].streak.click()
+    next(r for r in w.rows if r.base.isEnabled() and not r.base.isChecked()).base.click()
+    settle(qapp, w)
+    before = copy.deepcopy(view_of(w)[:-1]) + view_of(w)[-1:]
+    old, an = getattr(w, name).value(), w.analysis
+    getattr(w, name).setValue(value)
+    settle(qapp, w)
+    assert w.palette != before[0]
+    n = len(analyses[0])
+    press(qapp, w)
+    settle(qapp, w)
+    assert getattr(w, name).value() == old and view_of(w) == before and w.analysis is an
+    assert len(analyses[0]) == n and msg(w) == f"Desfeito: {label}."
+
+
+def test_undo_during_detection_drops_its_result(qapp, slow, analyses):
+    w = slow
+    load_sg(qapp, w)
+    before = copy.deepcopy(w.palette)
+    analyses[1].clear()
+    w.sp_n.setValue(5)
+    press(qapp, w)
+    analyses[1].set()
+    settle(qapp, w)
+    assert w.sp_n.value() == 3 and w.palette == before and len(w.rows) == 3
+    assert msg(w) == "Desfeito: Nº de cores."
+
+
+def test_step_taken_during_detection_detects_again(qapp, slow, analyses):
+    w = slow
+    load_sg(qapp, w)
+    before = copy.deepcopy(w.palette)
+    analyses[1].clear()
+    w.sp_n.setValue(5)
+    w.sp_w.setValue(180)
+    QTest.qWait(500)                           # past the preview debounce
+    analyses[1].set()
+    settle(qapp, w)
+    assert len(w.rows) == 5
+    five = copy.deepcopy(w.palette)
+    press(qapp, w)
+    settle(qapp, w)
+    assert (w.sp_w.value(), w.sp_n.value(), w.palette) == (150, 5, five)
+    assert msg(w) == "Desfeito: Largura." and analyses[0][-2:] == [5, 5]
+    press(qapp, w)
+    settle(qapp, w)
+    assert (w.sp_n.value(), w.palette, len(w.rows)) == (3, before, 3)
+
+
+def test_failed_detection_still_previews_and_undoes(qapp, slow, monkeypatch):
+    w = slow
+    load_sg(qapp, w)
+    gate = threading.Event()
+
+    def broken(*a):
+        gate.wait(30)
+        raise ValueError("quebrou")
+    monkeypatch.setattr(segment, "analyze", broken)
+    old = w.view_prev.item.pixmap().toImage()
+    w.sp_n.setValue(5)
+    w.sp_detail.setValue(3)
+    QTest.qWait(500)
+    gate.set()
+    settle(qapp, w)
+    assert "quebrou" in w.log.toPlainText() and w.view_prev.item.pixmap().toImage() != old
+    w.rows[0].streak.click()
+    press(qapp, w); settle(qapp, w)
+    assert msg(w) == "Desfeito: Filtro reflexo."
+
+
+def open_png(monkeypatch, path):
+    monkeypatch.setattr(main_window.QFileDialog, "getOpenFileName", lambda *a: (str(path), ""))
+
+
+def test_background_changes_forget_the_history(qapp, slow):
+    w = slow
+    load_sg(qapp, w)
+    for change in (lambda: w.sp_tol.setValue(50), lambda: w.cb_bg.setCurrentIndex(1)):
+        w.sp_w.setValue(w.sp_w.value() + 5)
+        change()
+        settle(qapp, w)
+        width = w.sp_w.value()
+        press(qapp, w)
+        assert msg(w) == NOTHING and w.sp_w.value() == width
+
+
+def test_open_image_forgets_the_history_only_on_success(qapp, slow, monkeypatch, tmp_path):
+    w = slow
+    load_sg(qapp, w)
+    w.rows[0].streak.click()
+    w.settings = QSettings(str(tmp_path / "s.ini"), QSettings.IniFormat)
+    monkeypatch.setattr(main_window.QMessageBox, "critical", lambda *a: None)
+    (tmp_path / "bad.png").write_text("x")
+    for path in ("", tmp_path / "bad.png"):
+        open_png(monkeypatch, path)
+        w.open_image()
+        assert len(w.history.steps) == 1
+    Image.fromarray(synthetic()).save(tmp_path / "ok.png")
+    open_png(monkeypatch, tmp_path / "ok.png")
+    w.open_image()
+    assert w.history.steps == []
+    w.sp_w.setValue(180)                       # before the new image is detected
+    settle(qapp, w)
+    new = copy.deepcopy(w.palette)
+    press(qapp, w); settle(qapp, w)
+    assert w.sp_w.value() == 150 and w.palette == new
+    press(qapp, w)
+    assert msg(w) == NOTHING
+
+
+def test_undo_during_export_leaves_the_export_alone(qapp, slow, monkeypatch, tmp_path):
+    w, gate, got = slow, threading.Event(), []
+    w.settings = QSettings(str(tmp_path / "s.ini"), QSettings.IniFormat)
+    load_sg(qapp, w)
+
+    def export(an, palette, params, *a, **k):
+        gate.wait(30)
+        got.append((params.width_mm, copy.deepcopy(palette.streak)))
+        return pipeline.Result([])
+    monkeypatch.setattr(pipeline, "export", export)
+    w.sp_w.setValue(180)
+    w.rows[0].streak.click()
+    streak = set(w.palette.streak)
+    w.ed_out.setText(str(tmp_path)); w.ed_name.setText("x"); w.ed_exe.setText("")
+    w.generate()
+    press(qapp, w); press(qapp, w)
+    assert w.sp_w.value() == 150 and w.palette.streak != streak
+    gate.set()
+    settle(qapp, w)
+    assert got == [(180, streak)]

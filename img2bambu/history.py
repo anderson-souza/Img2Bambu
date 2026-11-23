@@ -1,4 +1,20 @@
 import time
+from dataclasses import dataclass
+
+from .params import Palette
+
+
+@dataclass
+class Snapshot:
+    values: list                       # numeric fields, in window order
+    palette: Palette | None
+    analysis: object
+    pending: bool                      # a detection was running, so palette/analysis predate `values`
+
+    def __eq__(self, o):
+        # why: an Analysis holds arrays, which have no plain ==
+        return (self.values == o.values and self.palette == o.palette and self.analysis is o.analysis
+                and self.pending == o.pending)
 
 
 class History:

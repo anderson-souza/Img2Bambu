@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import bambu, pipeline, preview3d, segment
-from ..history import History
+from ..history import History, Snapshot
 from ..params import Params, hex_color
 from .view3d import View3D
 from .worker import Task
@@ -175,6 +175,8 @@ class MainWindow(QMainWindow):
         self.db = None
         self.pick_row = None
         self.history = History()
+        self.detecting = False
+        self.stale2d = False            # preview asked for while detecting
         self.undone = None              # label of the undo still shown in the status bar
 
         self.debounce = QTimer(self, singleShot=True, interval=350)
@@ -208,6 +210,7 @@ class MainWindow(QMainWindow):
         split.setStretchFactor(0, 3); split.setStretchFactor(1, 2)
         self.setCentralWidget(split)
         self.fields = {
+            "Nº de cores": self.sp_n, "Filamentos": self.sp_fil, "Suavização": self.sp_smooth,
             "Detalhe mínimo": self.sp_detail, "Filtro reflexo (raio)": self.sp_streak,
             "Largura": self.sp_w, "Espessura da base": self.sp_base, "Relevo das cores": self.sp_relief,
         }
@@ -232,9 +235,11 @@ class MainWindow(QMainWindow):
         self.cb_bg.addItem("Transparência (PNG com fundo transparente)", "alpha")
         self.cb_bg.addItem("Remover cor de fundo (a partir dos cantos)", "color")
         self.cb_bg.currentIndexChanged.connect(self.reanalyze)
+        self.cb_bg.currentIndexChanged.connect(self.forget_history)
         f.addRow("Fundo:", self.cb_bg)
         self.sp_tol = QSpinBox(); self.sp_tol.setRange(1, 120); self.sp_tol.setValue(self.params.bg_tolerance)
         self.sp_tol.valueChanged.connect(self.reanalyze)
+        self.sp_tol.valueChanged.connect(self.forget_history)
         f.addRow("Tolerância do fundo:", self.sp_tol)
         return g
 
@@ -381,6 +386,7 @@ class MainWindow(QMainWindow):
         self.ed_out.setText(os.path.join(os.path.dirname(path), "img2bambu_saida"))
         self.ed_name.setText(os.path.splitext(os.path.basename(path))[0])
         self.reanalyze()
+        self.forget_history()
 
     def read_params(self):
         p = self.params
@@ -400,6 +406,7 @@ class MainWindow(QMainWindow):
         if self.rgba is None:
             return
         self.req += 1
+        self.detecting = True
         self.status("Detectando cores…")
         t = Task(self.req, segment.analyze, self.rgba, self.read_params())
         t.signals.done.connect(self.analysis_done)
@@ -409,6 +416,7 @@ class MainWindow(QMainWindow):
     def analysis_done(self, tag, an):
         if tag != self.req:
             return
+        self.detecting = False
         keep = None if self.fresh_image else self.palette
         self.analysis, self.palette, self.fresh_image = an, segment.carry_over(keep, an.palette), False
         if an.note:
@@ -548,10 +556,15 @@ class MainWindow(QMainWindow):
     def run_preview(self):
         if self.analysis is None:
             return
-        self.req += 1
-        self.status("Atualizando prévia…")
         h, w = self.analysis.sil.shape
         self.lbl_h.setText(f"{self.sp_w.value() * h / w:.1f} mm")
+        if self.detecting:
+            # why: taking a new tag here would discard the detection, which previews by itself when done
+            self.stale2d = True
+            return
+        self.req += 1
+        self.stale2d = False
+        self.status("Atualizando prévia…")
         t = Task(self.req, pipeline.render, self.analysis, copy.deepcopy(self.palette), self.read_params())
         t.signals.done.connect(self.preview_done)
         t.signals.failed.connect(self.task_failed)
@@ -604,7 +617,14 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, e)
 
     def snapshot(self):
-        return [sp.value() for sp in self.fields.values()], copy.deepcopy(self.palette)
+        # why: until a new image is detected, palette and analysis still belong to the previous one
+        pal, an = (None, None) if self.fresh_image else (copy.deepcopy(self.palette), self.analysis)
+        return Snapshot([sp.value() for sp in self.fields.values()], pal, an, self.detecting)
+
+    def forget_history(self):
+        self.history.clear()
+        self.last = self.snapshot()
+        self.undone = None
 
     def record(self, label, key=None):
         before, self.last = self.last, self.snapshot()
@@ -616,15 +636,26 @@ class MainWindow(QMainWindow):
         if step is None:
             self.status("Nada para desfazer.")
             return
-        self.undone, (values, palette) = step
-        for sp, v in zip(self.fields.values(), values, strict=True):
+        self.undone, st = step
+        for sp, v in zip(self.fields.values(), st.values, strict=True):
             sp.blockSignals(True); sp.setValue(v); sp.blockSignals(False)
+        self.read_params()
         self.debounce.stop()
-        self.palette = palette
-        if palette is not None:
-            self.disarm()
-            self.refresh_rows()
-        self.run_preview()
+        self.disarm()
+        self.req += 1                  # why: drops a detection still running with the undone values
+        self.detecting = False
+        if st.palette is None:
+            self.fresh_image = True
+        else:
+            self.palette, self.analysis = st.palette, st.analysis
+            if len(self.rows) == len(self.palette.colors):
+                self.refresh_rows()
+            else:
+                self.build_rows()
+        if st.pending or st.palette is None:
+            self.reanalyze()
+        else:
+            self.run_preview()
         self.last = self.snapshot()
         self.status(f"Desfeito: {self.undone}.")
 
@@ -688,6 +719,11 @@ class MainWindow(QMainWindow):
         if tag == self.req:
             self.log_msg(f"Erro: {msg}")
             self.status("Erro.")
+            if self.detecting:
+                self.detecting = False
+                self.last = self.snapshot()
+                if self.stale2d:
+                    self.run_preview()
 
     # ---------- misc ----------
     def browse_exe(self):
