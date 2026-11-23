@@ -1,4 +1,4 @@
-from img2bambu.history import History
+from img2bambu.history import History, Snapshot
 
 
 class Clock:
@@ -67,3 +67,24 @@ def test_unchanged_state_is_no_step_and_clear_empties():
     h.clear()
     h.record("w", 151, 152, "w")
     assert [h.undo(), h.undo()] == [("w", 151), None]
+
+
+def test_at_most_ten_distinct_analyses_are_held():
+    h = History(clock=Clock())
+    ans = [object() for _ in range(11)]
+    for i, an in enumerate(ans[:10]):
+        for v in (0, 1, 2):                    # steps sharing one analysis count once
+            h.record(f"{i}.{v}", Snapshot([v], None, an, False), Snapshot([v + 1], None, an, False))
+    assert len(h.steps) == 30
+    h.record("n", Snapshot([0], None, None, False), Snapshot([1], None, None, False))
+    assert len(h.steps) == 31                  # a step without analysis costs nothing
+    h.record("10", Snapshot([0], None, ans[10], False), Snapshot([1], None, ans[10], False))
+    assert [label for label, _ in h.steps][:1] == ["1.0"] and len(h.steps) == 29
+    assert len({id(s.analysis) for _, s in h.steps if s.analysis}) == 10
+
+
+def test_one_analysis_keeps_the_fifty_steps():
+    h, an = History(clock=Clock()), object()
+    for v in range(60):
+        h.record("w", Snapshot([v], None, an, False), Snapshot([v + 1], None, an, False))
+    assert len(h.steps) == 50

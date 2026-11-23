@@ -18,10 +18,10 @@ class Snapshot:
 
 
 class History:
-    """Undo steps as snapshots of the state before each change; snapshots only need ==."""
+    """Undo steps as snapshots of the state before each change; snapshots need == and an optional `analysis`."""
 
-    def __init__(self, limit=50, gap=1.0, clock=time.monotonic):
-        self.limit, self.gap, self.clock = limit, gap, clock
+    def __init__(self, limit=50, gap=1.0, clock=time.monotonic, max_analyses=10):
+        self.limit, self.gap, self.clock, self.max_analyses = limit, gap, clock, max_analyses
         self.clear()
 
     def clear(self):
@@ -38,9 +38,21 @@ class History:
         if not joins:
             self.steps.append((label, before))
             del self.steps[:-self.limit]
+            self.drop_analyses()
         elif self.steps[-1][1] == after:     # why: the run came back to where it started
             self.steps.pop()
             self.burst = None
+
+    def drop_analyses(self):
+        """Drops the oldest steps until at most `max_analyses` distinct analyses (≈100 MB each at 4 MP) are held."""
+        held = set()
+        for i in range(len(self.steps) - 1, -1, -1):
+            an = getattr(self.steps[i][1], "analysis", None)
+            if an is not None:
+                held.add(id(an))
+            if len(held) > self.max_analyses:
+                del self.steps[:i + 1]
+                return
 
     def undo(self):
         """Pops the newest (label, state to restore), or None."""

@@ -1,7 +1,7 @@
 # Desfazer com Ctrl+Z
 
 **Approved**: 2026-11-23 - user: "aprovado"
-**Settled mid-build:** none
+**Settled mid-build:** 2026-11-23, after the fix pass - user: "sim, limite a 10 análises no histórico" - beyond 10 distinct analyses the oldest steps are dropped, so criterion 6 (50 steps) holds while at most 10 are involved
 **Review:** sent at 70112e6
 **Fix pass:** done - merge cycles are refused and keep the previous merge (P1), `Nada para desfazer.` survives a running preview (P2), steps that would change nothing are skipped (P3); P4 and P5 left as reported
 
