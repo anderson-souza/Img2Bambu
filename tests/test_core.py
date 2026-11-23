@@ -671,3 +671,9 @@ def test_equal_distances_merge_the_lower_pair():
     an.centers = np.array([_cv_lab(30), _cv_lab(50), _cv_lab(70)], np.float32)    # A–B == B–C exactly
     segment.auto_merge(an, an.palette, 2)
     assert an.palette.merges == {1: 0}          # pair (0, 1) before (1, 2); equal shares -> lower survives
+
+
+def test_cli_one_filament_prints_singular(monkeypatch, tmp_path, capsys):
+    _, out, stls = _cli_fil(monkeypatch, tmp_path, capsys, "--filaments", "1")
+    assert "Mesclagem automática: 4 cores → 1 filamento." in out
+    assert sum(line.startswith("Mesclada:") for line in out) == 3 and len(stls) == 1

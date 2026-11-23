@@ -33,7 +33,8 @@ def main(argv=None):
     pal = an.palette
     print("Paleta:", [hex_color(c) for c in pal.colors], "base:", pal.base_index)
     if pal.merges:
-        print(f"Mesclagem automática: {len(pal.colors)} cores → {len(pal.active())} filamentos.")
+        m = len(pal.active())
+        print(f"Mesclagem automática: {len(pal.colors)} cores → {m} filamento{'s' if m != 1 else ''}.")
         for i in sorted(pal.merges):
             print(f"Mesclada: {hex_color(pal.colors[i])} → {hex_color(pal.colors[pal.resolve(i)])}")
     outdir = a.out or os.path.join(os.path.dirname(os.path.abspath(a.image)), "img2bambu_saida")

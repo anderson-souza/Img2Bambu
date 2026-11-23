@@ -1,7 +1,7 @@
 # Automatic merge by distance (Filamentos)
 
 **Approved**: 2026-11-22 - user: "approve"
-**Settled mid-build:** none
+**Settled mid-build:** after the review, on keeping Filamentos = 1 (merge everything into one) and writing "1 filamento" in the singular - user: "1"
 **Review:** sent at e5c1d9e
 **Fix pass:** done - findings 1-3: tests that fail under a Ward cost, under a fixed distance basis (always centers or always samples) and under another tie-break; finding 5: moved the `why:` comment to its line; finding 4 (Filamentos = 1 and the singular "1 filamentos") is a product decision, taken to the user; the watertight export failure on the sample image is pre-existing
 
@@ -127,7 +127,8 @@ The user sets "Filamentos" and sees the closest colors already merged in the "�
     each merged-away row SHALL show `→ #RRGGBB` of its target
 12. WHEN an analysis ends with at least one automatic merge THEN the GUI SHALL log
     `Mesclagem automática: <k> cores → <m> filamentos.` where k = rows and m = active labels
-    - k=8, filaments 4 → "Mesclagem automática: 8 cores → 4 filamentos."; filaments 0 → no line
+    - k=8, filaments 4 → "Mesclagem automática: 8 cores → 4 filamentos."; filaments 0 → no line;
+      filaments 1 → "Mesclagem automática: 8 cores → 1 filamento." (singular, settled mid-build)
 13. WHEN the user changes a "—" combo after an automatic merge THEN the system SHALL apply that manual
     merge (or un-merge) as today, and it SHALL stand until the next re-analysis
 14. WHEN the user edits a sample or filament (dialog or eyedropper) THEN the system SHALL NOT recompute
@@ -191,7 +192,7 @@ The CLI accepts the same target and prints what it merged.
 | CLI | `--filaments N` 0–8, default 0, prints merges | user chose it | y |
 | Feedback | existing combos + log line `Mesclagem automática: <k> cores → <m> filamentos.` | user chose it | y |
 | Persistence | not saved | user chose it | y |
-| `Filamentos = 1` | allowed: everything merges into one group (single base, no raised parts), like merging all by hand today | the spin is 0–8 and an all-merged model already works (`test_model_all_merged_is_base_only`) | n |
+| `Filamentos = 1` | allowed: everything merges into one group (single base, no raised parts), like merging all by hand today | the spin is 0–8 and an all-merged model already works (`test_model_all_merged_is_base_only`) | y |
 | Distance basis | CIELAB (OpenCV's 8-bit L rescaled ×100/255) of the exact k-means centers while no sample is edited, else of each row's `samples` ("cor na imagem"); share from `assign` | same basis `assign` uses to give pixels to rows. On the sample image the 4th merge is a near-tie (ΔE ≈ 21 both ways) that the RGB round trip of `samples` flips; found mid-build | n |
 | Tie-breaks | equal distance → the pair with the lower (smaller, then larger) labels; equal share → lower label survives | determinism (criterion 9) | n |
 | Stop-early message text | `Mesclagem automática: só foi possível chegar a <m> filamentos (<e> cores editadas).` | Portuguese, same prefix as the success line | n |

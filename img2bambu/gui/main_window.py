@@ -411,7 +411,7 @@ class MainWindow(QMainWindow):
             self.log_msg(f"Mesclagem automática: só foi possível chegar a {left} filamentos "
                          f"({len(self.palette.edited)} cores editadas).")
         elif self.palette.merges:
-            self.log_msg(f"Mesclagem automática: {k} cores → {left} filamentos.")
+            self.log_msg(f"Mesclagem automática: {k} cores → {left} filamento{'s' if left != 1 else ''}.")
 
     def build_rows(self):
         self.disarm()

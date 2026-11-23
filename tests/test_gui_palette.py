@@ -564,3 +564,9 @@ def test_too_many_edited_rows_logs_stop(qapp, win, monkeypatch):
     assert len(win.palette.edited) == 3 and len(win.palette.active()) == 3
     assert set(win.palette.active()) == win.palette.edited
     assert log_lines(win)[-1] == "Mesclagem automática: só foi possível chegar a 3 filamentos (3 cores editadas)."
+
+
+def test_one_filament_logs_singular(qapp, win):
+    load_sg4(qapp, win, 1)
+    assert len(win.palette.active()) == 1 and win.palette.active() == [win.palette.base_index]
+    assert log_lines(win)[-1] == "Mesclagem automática: 4 cores → 1 filamento."
