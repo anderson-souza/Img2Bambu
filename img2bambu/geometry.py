@@ -3,10 +3,10 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 import trimesh
-from shapely.geometry import Polygon, MultiPolygon
+from shapely.geometry import MultiPolygon, Polygon
 from shapely.ops import unary_union
 
-from .params import Params, Palette, hex_color
+from .params import Palette, Params, hex_color
 
 
 @dataclass

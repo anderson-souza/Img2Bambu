@@ -3,13 +3,35 @@ import os
 import subprocess
 
 import numpy as np
-from PySide6.QtCore import Qt, QSettings, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QColor, QImage, QKeySequence, QPixmap, QPainter, QShortcut
+from PySide6.QtCore import QSettings, Qt, QThreadPool, QTimer, Signal
+from PySide6.QtGui import QColor, QImage, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
-    QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-    QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QRadioButton, QScrollArea,
-    QSpinBox, QSplitter, QTabWidget, QVBoxLayout, QWidget,
+    QButtonGroup,
+    QCheckBox,
+    QColorDialog,
+    QComboBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
+    QGraphicsPixmapItem,
+    QGraphicsScene,
+    QGraphicsView,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QPlainTextEdit,
+    QProgressBar,
+    QPushButton,
+    QRadioButton,
+    QScrollArea,
+    QSpinBox,
+    QSplitter,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
 )
 
 from .. import bambu, pipeline, preview3d, segment
@@ -576,8 +598,8 @@ class MainWindow(QMainWindow):
             self.log_msg(f"Projeto: {res.project}")
         if res.check:
             c = res.check
-            self.log_msg(f"Verificação: {c.get('changes')} trocas de filamento, cores {', '.join(c.get('colours', []))}, "
-                         f"tempo estimado {c.get('time') or '?'}.")
+            self.log_msg(f"Verificação: {c.get('changes')} trocas de filamento, "
+                         f"cores {', '.join(c.get('colours', []))}, tempo estimado {c.get('time') or '?'}.")
         for w in res.warnings:
             self.log_msg(f"⚠ {w}")
         self.status("Concluído.")

@@ -150,7 +150,8 @@ def patch_project(src, dst, colors, filament_keys=()):
     with zipfile.ZipFile(src) as zin:
         d = json.loads(zin.read("Metadata/project_settings.config"))
         if len(d.get("filament_settings_id", [])) != n:
-            raise RuntimeError(f"Projeto exportado com {len(d.get('filament_settings_id', []))} filamentos, esperado {n}.")
+            raise RuntimeError(f"Projeto exportado com {len(d.get('filament_settings_id', []))} filamentos, "
+                               f"esperado {n}.")
         for k, v in d.items():
             if isinstance(v, list) and len(v) == 1 and (k in filament_keys or k.startswith("filament_")):
                 d[k] = v * n

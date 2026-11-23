@@ -2,11 +2,11 @@ import json
 import time
 
 import pytest
+from test_core import synthetic
 
 from img2bambu import bambu, preview3d
 from img2bambu.gui import main_window, view3d
 from img2bambu.gui.main_window import MainWindow
-from test_core import synthetic
 
 RealDB = bambu.PresetDB
 MACHINES = {
@@ -240,6 +240,7 @@ def test_stale_model_failure_ignored(qapp, win, calls):
 def test_model_updates_while_export_runs(qapp, win, calls, tmp_path, monkeypatch):
     import threading
     from types import SimpleNamespace
+
     from PySide6.QtCore import QSettings
     load(qapp, win)
     win.tabs.setCurrentWidget(win.view3d)

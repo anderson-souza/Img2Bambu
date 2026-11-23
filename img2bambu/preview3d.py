@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from . import pipeline
-from .params import Params, Palette
+from .params import Palette, Params
 
 
 @dataclass

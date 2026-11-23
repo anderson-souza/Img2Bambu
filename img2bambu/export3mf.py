@@ -43,7 +43,8 @@ def write_minimal_3mf(parts, path, title, bed_center=(128.0, 128.0)):
     model.append(f'<object id="{n + 1}" type="model"><components>' +
                  "".join(f'<component objectid="{i}" transform="{ident}"/>' for i in range(1, n + 1)) +
                  '</components></object>\n</resources>\n')
-    model.append(f'<build><item objectid="{n + 1}" transform="1 0 0 0 1 0 0 0 1 {tx:.3f} {ty:.3f} 0" printable="1"/></build>\n</model>\n')
+    model.append(f'<build><item objectid="{n + 1}" transform="1 0 0 0 1 0 0 0 1 {tx:.3f} {ty:.3f} 0" '
+                 'printable="1"/></build>\n</model>\n')
 
     cfg = [f'<?xml version="1.0" encoding="UTF-8"?>\n<config>\n  <object id="{n + 1}">\n'
            f'    <metadata key="name" value={quoteattr(title)}/>\n    <metadata key="extruder" value="1"/>\n']
