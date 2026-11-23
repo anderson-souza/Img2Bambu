@@ -2,7 +2,7 @@
 
 **Approved**: 2026-11-23 - user: "aprovado, pode começar pela S1"
 **Settled mid-build:** none
-**Review:**
+**Review:** sent at S4 commit
 **Fix pass:**
 
 ## Problem
