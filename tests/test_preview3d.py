@@ -2,10 +2,10 @@ import json
 
 import numpy as np
 import pytest
+from test_core import synthetic
 
 from img2bambu import bambu, geometry, pipeline, preview3d, segment
 from img2bambu.params import Params
-from test_core import synthetic
 
 
 def test_model_matches_export_parts():
@@ -14,7 +14,7 @@ def test_model_matches_export_parts():
     ref = geometry.build_parts(*segment.build_masks(an, an.palette, p), an.palette, p)
     got = pipeline.model(an, an.palette, p)
     assert len(got) == len(ref) == 3
-    for g, r in zip(got, ref):
+    for g, r in zip(got, ref, strict=True):
         assert g.name == r.name
         assert tuple(g.color) == tuple(r.color)
         assert np.allclose(g.mesh.bounds, r.mesh.bounds)
@@ -122,7 +122,7 @@ def test_build_follows_model_order(model_parts):
     meshes = preview3d.build(an, an.palette, p)
     assert [m.name for m in meshes] == [pt.name for pt in parts]
     assert [m.color for m in meshes] == [tuple(pt.color) for pt in parts]
-    assert all(np.allclose(m.lo, pt.mesh.bounds[0]) for m, pt in zip(meshes, parts))
+    assert all(np.allclose(m.lo, pt.mesh.bounds[0]) for m, pt in zip(meshes, parts, strict=True))
 
 
 def test_size_of_synthetic_model():

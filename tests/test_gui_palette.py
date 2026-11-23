@@ -1,10 +1,10 @@
 from PIL import Image
 from PySide6.QtGui import QColor
+from test_core import GREEN, PATCH, SAGE, sage_green
+from test_gui_preview3d import calls, presets, settle, win  # noqa: F401 — why: shared fixtures
 
 from img2bambu.gui import main_window
 from img2bambu.params import hex_color
-from test_core import GREEN, PATCH, SAGE, sage_green
-from test_gui_preview3d import calls, presets, settle, win  # noqa: F401 — why: shared fixtures
 
 
 def load_sg(qapp, w):
@@ -15,7 +15,7 @@ def load_sg(qapp, w):
 
 def row_of(w, color):
     return min(range(len(w.palette.colors)),
-               key=lambda i: sum((a - b) ** 2 for a, b in zip(w.palette.colors[i], color)))
+               key=lambda i: sum((a - b) ** 2 for a, b in zip(w.palette.colors[i], color, strict=True)))
 
 
 def answer(monkeypatch, color, titles):
@@ -109,7 +109,7 @@ def test_reanalysis_keeps_edited_row(qapp, win, monkeypatch):
     assert len(win.rows) == 4
     (j,) = win.palette.edited
     assert (win.palette.colors[j], win.palette.samples[j]) == kept
-    assert max(abs(a - b) for a, b in zip(win.analysis.samples[j], SAGE)) <= 3   # landed on the sage row
+    assert max(abs(a - b) for a, b in zip(win.analysis.samples[j], SAGE, strict=True)) <= 3   # landed on the sage row
     assert sum(1 for c in win.palette.colors if c == (255, 255, 255)) == 1
 
 

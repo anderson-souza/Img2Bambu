@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from PIL import Image
 
 from . import bambu, export3mf, geometry, segment
-from .params import Params, Palette, hex_color
+from .params import Palette, Params, hex_color
 
 
 @dataclass
