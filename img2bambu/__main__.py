@@ -35,6 +35,9 @@ def main(argv=None):
     exe = None if a.stl_only else bambu.find_exe()
     if exe:
         db = bambu.PresetDB()
+        if not db.ok:
+            print("Presets do Bambu Studio não encontrados: só STLs serão gerados. Abra o Bambu Studio uma vez.")
+    if db and db.ok:
         proc, fil = db.defaults(a.printer)
         choice = pipeline.BambuChoice(exe, a.printer, a.process or proc, a.filament or fil, a.check)
     res = pipeline.export(an, an.palette, params, outdir, name, choice, db,

@@ -58,7 +58,10 @@ def sandbox_sees(folder):
     """Asks the Flatpak sandbox itself, so permission overrides are respected."""
     # hazard: the sandbox has its own /tmp, so the folder may exist there with other contents; test a file instead
     with tempfile.NamedTemporaryFile(prefix=".img2bambu_", dir=folder) as f:
-        r = _run("flatpak", ["run", "--command=test", FLATPAK_ID, "-r", os.path.abspath(f.name)], timeout=60)
+        try:
+            r = _run("flatpak", ["run", "--command=test", FLATPAK_ID, "-r", os.path.abspath(f.name)], timeout=60)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise RuntimeError(f"Não foi possível consultar o Flatpak sobre a pasta de saída: {e}") from e
     return r.returncode == 0
 
 

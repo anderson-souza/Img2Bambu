@@ -2,8 +2,8 @@
 
 **Approved**: 2026-11-23 - user: "aprovado, pode começar pela S1"
 **Settled mid-build:** none
-**Review:** sent at S4 commit
-**Fix pass:**
+**Review:** sent at e9e10d7
+**Fix pass:** done - expand `~` in the exe field, CLI without presets exports STLs, explained probe errors, test gaps closed, CLAUDE.md and README updated; kept: wrapper scripts on PATH skip the folder check (cannot be identified reliably)
 
 ## Problem
 

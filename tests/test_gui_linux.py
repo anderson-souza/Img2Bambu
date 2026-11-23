@@ -35,6 +35,12 @@ def test_refused_folder_shows_error_and_allows_retry(qapp, win, flatpak, monkeyp
     assert shown[0].startswith(f"O Bambu Studio (Flatpak) não acessa a pasta de saída: {out}.")
     assert win.bt_gen.isEnabled() and not win.busy_export
     assert list(out.iterdir()) == []
+    monkeypatch.setattr(bambu, "sandbox_sees", lambda d: True)
+    monkeypatch.setattr(bambu, "export_project", lambda *a, **k: None)
+    win.ck_check.setChecked(False)
+    win.generate()
+    settle(qapp, win)
+    assert len(shown) == 1 and win.last_project.endswith("t.3mf")
 
 
 @pytest.mark.parametrize("platform, filt", [("linux", "Todos (*)"), ("win32", "Executável (*.exe)")])
@@ -69,6 +75,17 @@ def test_open_bambu_launches_flatpak(win, flatpak, monkeypatch):  # noqa: F811
     win.last_project = "/home/u/t.3mf"
     win.open_bambu()
     assert ran == [[flatpak, "/home/u/t.3mf"]]
+
+
+def test_tilde_in_exe_is_expanded(win, flatpak, monkeypatch, tmp_path):  # noqa: F811
+    ran = []
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setattr(main_window.subprocess, "Popen", ran.append)
+    win.ed_exe.setText(f"~/{bambu.FLATPAK_ID}")
+    win.last_project = "/home/u/t.3mf"
+    win.open_bambu()
+    assert [Path(a) for a in ran[0]] == [Path(flatpak), Path("/home/u/t.3mf")]
 
 
 def test_exe_field_filled_from_detection(qapp, flatpak, monkeypatch, presets):  # noqa: F811

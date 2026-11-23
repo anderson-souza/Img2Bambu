@@ -571,7 +571,7 @@ class MainWindow(QMainWindow):
         if not outdir or not name:
             QMessageBox.warning(self, "Img2Bambu", "Defina pasta de saída e nome do arquivo.")
             return
-        exe = self.ed_exe.text().strip()
+        exe = os.path.expanduser(self.ed_exe.text().strip())
         choice = None
         if exe and os.path.isfile(exe) and self.db and self.db.ok and self.cb_process.currentText() \
                 and self.cb_filament.currentText():
@@ -635,7 +635,7 @@ class MainWindow(QMainWindow):
             self.ed_out.setText(p)
 
     def open_bambu(self):
-        exe = self.ed_exe.text().strip()
+        exe = os.path.expanduser(self.ed_exe.text().strip())
         if self.last_project and os.path.isfile(exe):
             subprocess.Popen([exe, self.last_project])
 

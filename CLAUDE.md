@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Img2Bambu: PNG/JPG image → multicolor 3MF project for Bambu Studio. Output = one object with a base part (silhouette, default 10 mm, color = dominant edge color) plus one raised part per remaining color (default 1 mm). Part i is pre-assigned to filament i. Windows-only in practice (Bambu Studio paths, `winreg`, PyInstaller `.exe`). User-facing strings and README are in Portuguese; code and comments in English.
+Img2Bambu: PNG/JPG image → multicolor 3MF project for Bambu Studio. Output = one object with a base part (silhouette, default 10 mm, color = dominant edge color) plus one raised part per remaining color (default 1 mm). Part i is pre-assigned to filament i. Runs on Windows and Linux (Bambu Studio native or Flatpak); the PyInstaller `.exe` is Windows-only. User-facing strings and README are in Portuguese; code and comments in English.
 
 ## Coding Behavior Contract (12 Rules)
 
@@ -44,7 +44,7 @@ Pipeline (`pipeline.export`) — same path for CLI (`__main__.py`) and GUI:
 
 Key state: `Params` (user dimensions/tuning) and `Palette` (colors, base_index, merges, streak set) in `params.py`. `Palette.active()` = labels not merged away.
 
-`bambu.PresetDB` reads system presets from `%APPDATA%\BambuStudio\system\BBL\{machine,process,filament}\*.json`, resolves `inherits` chains, and filters by `instantiation == "true"` and `compatible_printers`. User presets are not loadable by the CLI, so only system presets are offered.
+`bambu.PresetDB` reads system presets from `presets_root()` (Windows `%APPDATA%\BambuStudio\system\BBL`; Linux Flatpak or `~/.config`) `{machine,process,filament}/*.json`, resolves `inherits` chains, and filters by `instantiation == "true"` and `compatible_printers`. User presets are not loadable by the CLI, so only system presets are offered.
 
 GUI (`gui/main_window.py`, PySide6): long work runs as `gui/worker.Task` (QRunnable on the global QThreadPool); each task carries a `tag` so stale analysis/preview results are discarded. Settings persisted with `QSettings`.
 
