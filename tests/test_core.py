@@ -335,3 +335,120 @@ def test_sample_at_outside_object_is_none():
     assert segment.sample_at(an, -10, -10) is None                   # left of / above the crop
     h, w = an.sil.shape
     assert segment.sample_at(an, h + 10, w // 2) is None             # below the crop
+
+
+def gradient_noise():
+    """Opaque disc on transparent black: left-to-right two-color gradient plus speckle noise."""
+    h = w = 200
+    img = np.zeros((h, w, 4), np.uint8)
+    yy, xx = np.mgrid[:h, :w]
+    disc = (yy - 100) ** 2 + (xx - 100) ** 2 < 95 ** 2
+    t = (xx / (w - 1))[..., None]
+    rgb = (1 - t) * np.array([220, 140, 150]) + t * np.array([110, 160, 90])
+    rgb += np.random.default_rng(1).normal(0, 12, rgb.shape)
+    img[..., :3] = np.clip(rgb, 0, 255).astype(np.uint8)
+    img[..., 3] = disc * 255
+    img[~disc, :3] = 0
+    return img
+
+
+def _components(an):
+    import cv2
+    return sum(cv2.connectedComponents((an.labels == i).astype(np.uint8), connectivity=8)[0] - 1
+               for i in range(len(an.palette.colors)))
+
+
+def test_smooth_defaults_off():
+    assert Params().smooth == 0
+
+
+def test_smooth_zero_is_todays_analysis():
+    img = gradient_noise()
+    an = segment.analyze(img, Params(n_colors=3, smooth=0))
+    sil, _ = segment.silhouette(img, Params())
+    rgba, sil, _ = segment._crop(img, sil)
+    labels, colors, centers, lab = segment.kmeans_palette(rgba, sil, 3)
+    assert np.array_equal(an.labels, labels) and np.array_equal(an.lab, lab)
+    assert np.array_equal(an.centers, centers) and an.palette.colors == colors
+    assert list(an.samples) == segment._to_rgb(centers)
+
+
+@pytest.mark.parametrize("level,sp,sr", [(1, 4, 8), (3, 12, 24), (5, 20, 40)])
+def test_smooth_level_sets_mean_shift_strength(monkeypatch, level, sp, sr):
+    import cv2
+    seen, real = [], cv2.pyrMeanShiftFiltering
+
+    def spy(rgb, a, b):
+        out = real(rgb, a, b)
+        seen.append((a, b, out))
+        return out
+    monkeypatch.setattr(segment.cv2, "pyrMeanShiftFiltering", spy)
+    an = segment.analyze(gradient_noise(), Params(n_colors=3, smooth=level))
+    ((a, b, out),) = seen
+    assert (a, b) == (sp, sr)
+    assert np.array_equal(an.lab, segment._to_lab(out[an.sil]))      # clustering ran on the filtered pixels
+
+
+def test_smooth_reduces_islands():
+    img = gradient_noise()
+    base = _components(segment.analyze(img, Params(n_colors=3, smooth=0)))
+    for level in (1, 3):
+        assert _components(segment.analyze(img, Params(n_colors=3, smooth=level))) < base
+
+
+def test_smooth_ignores_rgb_of_transparent_pixels():
+    img = np.zeros((120, 120, 4), np.uint8)
+    yy, xx = np.mgrid[:120, :120]
+    disc = (yy - 60) ** 2 + (xx - 60) ** 2 < 50 ** 2
+    img[disc] = (235, 235, 225, 255)                                  # light edge next to the background
+    img[40:80, 40:80] = (200, 90, 110, 255)
+    white = img.copy()
+    white[~disc] = (255, 255, 255, 0)
+    p = Params(n_colors=2, smooth=3)
+    a, b = segment.analyze(img, p), segment.analyze(white, p)
+    assert np.array_equal(a.labels, b.labels)
+    assert a.palette.colors == b.palette.colors
+    light = _row_of(a, (235, 235, 225))
+    assert (a.labels[a.sil] == light).sum() == (disc.sum() - 1600)    # no dark ring at the edge
+
+
+def test_smooth_keeps_original_image_for_eyedropper():
+    img = gradient_noise()
+    an = segment.analyze(img, Params(n_colors=3, smooth=3))
+    oy, ox = an.offset
+    assert np.array_equal(an.rgba, img[oy:oy + an.sil.shape[0], ox:ox + an.sil.shape[1]])
+    y, x = 100 - oy, 100 - ox
+    want = tuple(int(v) for v in np.round(img[98:103, 98:103, :3].astype(float).mean((0, 1))))
+    assert segment.sample_at(an, y, x) == want
+
+
+def _cli(monkeypatch, tmp_path, *extra):
+    from PIL import Image
+
+    from img2bambu import __main__ as cli
+    img = tmp_path / "g.png"
+    Image.fromarray(synthetic()).save(img)
+    seen, real = [], segment.analyze
+    monkeypatch.setattr(cli.segment, "analyze", lambda path, p: (seen.append(p.smooth), real(path, p))[1])
+    assert cli.main([str(img), "--stl-only", "--out", str(tmp_path / "out"), *extra]) == 0
+    return seen
+
+
+def test_cli_smooth_flag(monkeypatch, tmp_path):
+    assert _cli(monkeypatch, tmp_path, "--smooth", "5") == [5]
+
+
+def test_cli_smooth_defaults_to_zero(monkeypatch, tmp_path):
+    assert _cli(monkeypatch, tmp_path) == [0]
+
+
+@pytest.mark.parametrize("bad", ["6", "-1", "1.5", "x"])
+def test_cli_smooth_out_of_range_exits_2(monkeypatch, capsys, bad):
+    from img2bambu import __main__ as cli
+    called = []
+    monkeypatch.setattr(cli.segment, "load_image", lambda *a: called.append(a))
+    monkeypatch.setattr(cli.segment, "analyze", lambda *a: called.append(a))
+    with pytest.raises(SystemExit) as e:
+        cli.main(["missing.png", "--smooth", bad])
+    assert e.value.code == 2 and called == []
+    assert "--smooth" in capsys.readouterr().err

@@ -98,11 +98,27 @@ def suggest_streak(colors):
     return {i for i, v in enumerate(hsv) if v[1] < 60 and v[2] > 150}
 
 
+def smoothed(rgba, sil, level):
+    """RGBA whose RGB is mean-shift filtered at `level` (0 = unchanged); outside pixels never bleed in."""
+    if level <= 0:
+        return rgba
+    # hazard: transparent pixels often hold black; fill them from the nearest silhouette pixel first
+    _, idx = cv2.distanceTransformWithLabels((~sil).astype(np.uint8), cv2.DIST_L2, 5,
+                                             labelType=cv2.DIST_LABEL_PIXEL)
+    ys, xs = np.nonzero(sil)
+    lut = np.zeros((idx.max() + 1, 3), np.uint8)
+    lut[idx[sil]] = rgba[ys, xs, :3]
+    rgb = np.ascontiguousarray(lut[idx])
+    out = rgba.copy()
+    out[..., :3] = cv2.pyrMeanShiftFiltering(rgb, 4 * level, 8 * level)
+    return out
+
+
 def analyze(path_or_rgba, params: Params):
     rgba = load_image(path_or_rgba) if isinstance(path_or_rgba, str) else path_or_rgba
     sil, note = silhouette(rgba, params)
     rgba, sil, offset = _crop(rgba, sil)
-    labels, colors, centers, lab = kmeans_palette(rgba, sil, params.n_colors)
+    labels, colors, centers, lab = kmeans_palette(smoothed(rgba, sil, params.smooth), sil, params.n_colors)
     samples = _to_rgb(centers)
     pal = Palette(colors=colors, base_index=suggest_base(labels, sil, len(colors)),
                   streak=suggest_streak(colors), samples=list(samples))

@@ -14,6 +14,7 @@ class Params:
     bg_tolerance: int = 30
     upsample: int = 2
     simplify_mm: float = 0.04
+    smooth: int = 0                    # mean-shift level before clustering; 0 disables it
 
 
 @dataclass
