@@ -293,3 +293,45 @@ def test_carry_over_without_edits_is_fresh():
     fresh = _pal([DARK, PINK])
     assert segment.carry_over(None, fresh) is fresh
     assert segment.carry_over(_pal([LIGHT]), fresh).samples == [DARK, PINK]
+
+
+def _sg_analysis(img=None):
+    img = sage_green() if img is None else img
+    an = segment.analyze(img, Params(width_mm=100, n_colors=3))
+    ys, xs = np.nonzero(img[..., 3] > 128)
+    assert an.offset == (ys.min(), xs.min())
+    return an
+
+
+def test_sample_at_uniform_area():
+    an = _sg_analysis()
+    oy, ox = an.offset
+    assert segment.sample_at(an, 200 - oy, 270 - ox) == PATCH
+
+
+def test_sample_at_means_a_mixed_window():
+    an = _sg_analysis()
+    oy, ox = an.offset
+    # why: window x 198..202 = 2 sage columns + 3 green columns, 10 + 15 pixels
+    assert segment.sample_at(an, 100 - oy, 200 - ox) == (189, 188, 136)
+
+
+def test_sample_at_ignores_background_pixels():
+    img = sage_green()
+    img[img[..., 3] == 0] = (255, 255, 255, 0)       # bright transparent background
+    an = _sg_analysis(img)
+    oy, ox = an.offset
+    y = 30 - oy                                      # disc edge above the colored areas (they start at y=60)
+    x = int(np.argmax(an.sil[y]))                    # first disc pixel of that row
+    win = an.sil[y - 2:y + 3, x - 2:x + 3]
+    assert 0 < win.sum() < 25
+    assert segment.sample_at(an, y, x) == (20, 20, 20)
+
+
+def test_sample_at_outside_object_is_none():
+    an = _sg_analysis()
+    assert not an.sil[0:5, 0:5].any()
+    assert segment.sample_at(an, 2, 2) is None                       # crop corner, background only
+    assert segment.sample_at(an, -10, -10) is None                   # left of / above the crop
+    h, w = an.sil.shape
+    assert segment.sample_at(an, h + 10, w // 2) is None             # below the crop

@@ -3,8 +3,8 @@ import os
 import subprocess
 
 import numpy as np
-from PySide6.QtCore import Qt, QSettings, QThreadPool, QTimer
-from PySide6.QtGui import QColor, QImage, QPixmap, QPainter
+from PySide6.QtCore import Qt, QSettings, QThreadPool, QTimer, Signal
+from PySide6.QtGui import QColor, QImage, QKeySequence, QPixmap, QPainter, QShortcut
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QColorDialog, QComboBox, QDoubleSpinBox, QFileDialog, QFormLayout,
     QGraphicsPixmapItem, QGraphicsScene, QGraphicsView, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
@@ -28,6 +28,8 @@ def to_pixmap(arr):
 
 
 class ImageView(QGraphicsView):
+    picked = Signal(int, int)       # (y, x) pixel of the shown image
+
     def __init__(self):
         super().__init__()
         self.setScene(QGraphicsScene(self))
@@ -38,6 +40,23 @@ class ImageView(QGraphicsView):
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         self.setBackgroundBrush(QColor("#d0d0d0"))
         self._fitted = False
+        self.picking = False
+
+    def set_picking(self, on):
+        self.picking = on
+        self.setDragMode(QGraphicsView.NoDrag if on else QGraphicsView.ScrollHandDrag)
+        if on:
+            self.viewport().setCursor(Qt.CrossCursor)
+        else:
+            self.viewport().unsetCursor()
+
+    def mousePressEvent(self, e):
+        if self.picking and e.button() == Qt.LeftButton:
+            p = self.mapToScene(e.position().toPoint())
+            self.picked.emit(int(np.floor(p.y())), int(np.floor(p.x())))
+            e.accept()
+            return
+        super().mousePressEvent(e)
 
     def set_image(self, arr, refit=False):
         self.item.setPixmap(to_pixmap(arr))
@@ -62,6 +81,10 @@ class ColorRow(QWidget):
         self.sample = QPushButton(); self.sample.setFixedSize(42, 24)
         self.sample.setToolTip("Cor na imagem: define quais pixels vão para esta cor (clique para alterar)")
         self.sample.clicked.connect(lambda: self.pick("samples", "Cor na imagem"))
+        self.drop = QPushButton("💧"); self.drop.setFixedSize(28, 24); self.drop.setCheckable(True)
+        self.drop.setToolTip("Conta-gotas: clique e depois clique na imagem (Original ou Prévia) "
+                             "para definir a cor na imagem (Esc cancela)")
+        self.drop.clicked.connect(lambda: self.win.toggle_pick(self.idx))
         self.swatch = QPushButton(); self.swatch.setFixedSize(42, 24)
         self.swatch.setToolTip("Cor do filamento (clique para alterar)")
         self.swatch.clicked.connect(lambda: self.pick("colors", "Cor do filamento"))
@@ -71,7 +94,7 @@ class ColorRow(QWidget):
         self.streak.setToolTip("Remove listras finas desta cor (reflexos de brilho)")
         self.merge = QComboBox(); self.merge.setToolTip("Mesclar esta cor em outra")
         self.pct = QLabel()
-        for w in (self.sample, QLabel("→"), self.swatch, self.base, self.streak, self.merge, self.pct):
+        for w in (self.drop, self.sample, QLabel("→"), self.swatch, self.base, self.streak, self.merge, self.pct):
             lay.addWidget(w)
         lay.addStretch()
 
@@ -126,6 +149,7 @@ class MainWindow(QMainWindow):
         self.busy_export = False
         self.last_project = None
         self.db = None
+        self.pick_row = None
 
         self.debounce = QTimer(self, singleShot=True, interval=350)
         self.debounce.timeout.connect(self.run_preview)
@@ -138,6 +162,10 @@ class MainWindow(QMainWindow):
         self.view3d = View3D()
         self.tabs.addTab(self.view3d, "3D")
         self.tabs.currentChanged.connect(self.tab_changed)
+        self.view_orig.picked.connect(lambda y, x: self.pick_from(self.view_orig, y, x))
+        self.view_prev.picked.connect(lambda y, x: self.pick_from(self.view_prev, y, x))
+        self.esc = QShortcut(QKeySequence(Qt.Key_Escape), self, self.cancel_pick)
+        self.esc.setEnabled(False)
         split.addWidget(self.tabs)
 
         side = QWidget(); sl = QVBoxLayout(side)
@@ -299,6 +327,7 @@ class MainWindow(QMainWindow):
             return
         self.image_path = path
         self.fresh_image = True
+        self.disarm()
         self.lbl_file.setText(os.path.basename(path))
         self.view_orig.set_image(self.rgba, refit=True)
         self.view_prev._fitted = False
@@ -340,6 +369,7 @@ class MainWindow(QMainWindow):
         self.run_preview()
 
     def build_rows(self):
+        self.disarm()
         for r in self.rows:
             self.base_group.removeButton(r.base)
             r.setParent(None)
@@ -389,6 +419,61 @@ class MainWindow(QMainWindow):
             self.palette.base_index = self.palette.resolve(self.palette.base_index)
         self.palette_changed()
 
+    def toggle_pick(self, i):
+        if self.pick_row == i:
+            self.cancel_pick()
+            return
+        self.pick_row = i
+        for r in self.rows:
+            r.drop.setChecked(r.idx == i)
+        for v in (self.view_orig, self.view_prev):
+            v.set_picking(True)
+        self.esc.setEnabled(True)
+        self.status(self.pick_hint())
+
+    def pick_hint(self):
+        return f"Clique na imagem para definir a cor na imagem da cor {self.pick_row + 1} (Esc cancela)."
+
+    def disarm(self):
+        self.pick_row = None
+        for r in self.rows:
+            r.drop.setChecked(False)
+        for v in (self.view_orig, self.view_prev):
+            v.set_picking(False)
+        self.esc.setEnabled(False)
+
+    def cancel_pick(self):
+        if self.pick_row is None:
+            return
+        self.disarm()
+        self.status("Conta-gotas cancelado.")
+
+    def pick_from(self, view, y, x):
+        if self.pick_row is None or self.analysis is None:
+            return
+        pm = view.item.pixmap()
+        h, w = self.rgba.shape[:2] if view is self.view_orig else (pm.height(), pm.width())
+        if not (0 <= y < h and 0 <= x < w):
+            # why: the 5x5 window of a click just past the image edge would still reach the object
+            self.status("Clique dentro do objeto.")
+            return
+        if view is self.view_orig:
+            self.pick_at(y - self.analysis.offset[0], x - self.analysis.offset[1])
+        else:
+            self.pick_at(y // self.params.upsample, x // self.params.upsample)
+
+    def pick_at(self, y, x):
+        # invariant: (y, x) is a pixel of the cropped analysis image
+        i = self.pick_row
+        rgb = segment.sample_at(self.analysis, y, x)
+        if rgb is None:
+            self.status("Clique dentro do objeto.")
+            return
+        self.palette.samples[i] = rgb
+        self.palette.edited.add(i)
+        self.disarm()
+        self.palette_changed()
+
     def palette_changed(self):
         self.refresh_rows()
         self.debounce.start()
@@ -420,7 +505,9 @@ class MainWindow(QMainWindow):
             return
         self.view_prev.set_image(out[2])
         self.show_count(out[1])
-        self.status("Prévia pronta. Ajuste as cores ou clique em Gerar 3MF.")
+        # why: a preview from an earlier pick must not hide the hint of the pick still armed
+        self.status(self.pick_hint() if self.pick_row is not None
+                    else "Prévia pronta. Ajuste as cores ou clique em Gerar 3MF.")
 
     def tab_changed(self, i):
         if self.tabs.widget(i) is self.view3d and self.dirty3d and self.analysis is not None:

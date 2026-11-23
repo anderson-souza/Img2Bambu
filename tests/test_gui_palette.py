@@ -142,3 +142,277 @@ def test_new_image_starts_fresh(qapp, win, monkeypatch, tmp_path):
     settle(qapp, win)
     assert win.palette.edited == set()
     assert (255, 255, 255) not in win.palette.colors
+
+
+# ---------- eyedropper ----------
+
+def click_view(qapp, view, y, x):
+    """Left-click image pixel (y, x) of the view's pixmap, zoomed so one pixel spans several on screen."""
+    from PySide6.QtCore import QPointF, Qt
+    from PySide6.QtTest import QTest
+    view.resetTransform(); view.scale(4, 4); view.centerOn(x + 0.5, y + 0.5)
+    pos = view.mapFromScene(QPointF(x + 0.5, y + 0.5))
+    QTest.mouseClick(view.viewport(), Qt.LeftButton, Qt.NoModifier, pos)
+    qapp.processEvents()
+
+
+def armed_state(w):
+    from PySide6.QtCore import Qt
+    return (w.pick_row, [r.drop.isChecked() for r in w.rows],
+            [v.viewport().cursor().shape() == Qt.CrossCursor for v in (w.view_orig, w.view_prev)])
+
+
+def snapshot(w):
+    return list(w.palette.colors), list(w.palette.samples), set(w.palette.edited), pcts(w)
+
+
+def test_eyedropper_button_per_row(qapp, win):
+    load_sg(qapp, win)
+    for r in win.rows:
+        assert r.drop.toolTip() == ("Conta-gotas: clique e depois clique na imagem (Original ou Prévia) "
+                                    "para definir a cor na imagem (Esc cancela)")
+
+
+def test_arm_shows_cross_and_status(qapp, win):
+    load_sg(qapp, win)
+    win.rows[1].drop.click()
+    assert armed_state(win) == (1, [False, True, False], [True, True])
+    assert win.statusBar().currentMessage() == \
+        "Clique na imagem para definir a cor na imagem da cor 2 (Esc cancela)."
+
+
+def test_original_click_sets_sample(qapp, win):
+    load_sg(qapp, win)
+    sage, green = row_of(win, SAGE), row_of(win, GREEN)
+    before = pcts(win)
+    win.rows[sage].drop.click()
+    click_view(qapp, win.view_orig, 200, 270)        # inside PATCH, loaded-image coordinates
+    settle(qapp, win)
+    assert win.palette.samples[sage] == PATCH and sage in win.palette.edited
+    assert int(pcts(win)[sage][:-1]) > int(before[sage][:-1])
+    assert int(pcts(win)[green][:-1]) < int(before[green][:-1])
+    assert preview_px(win, 180, 250) == SAGE
+    assert armed_state(win) == (None, [False] * 3, [False, False])
+
+
+def test_original_click_uses_crop_offset(qapp, win):
+    load_sg(qapp, win)
+    assert win.analysis.offset != (0, 0)
+    green = row_of(win, GREEN)
+    win.rows[green].drop.click()
+    # why: without the offset this lands 20 px right/down, inside green instead of sage
+    click_view(qapp, win.view_orig, 100, 190)
+    settle(qapp, win)
+    assert win.palette.samples[green] == SAGE
+    assert win.palette.colors[green] == GREEN        # filament untouched
+
+
+def test_click_outside_object_keeps_pick_armed(qapp, win):
+    load_sg(qapp, win)
+    snap = snapshot(win)
+    win.rows[0].drop.click()
+    click_view(qapp, win.view_orig, 5, 5)
+    settle(qapp, win)
+    assert snapshot(win) == snap
+    assert armed_state(win)[0] == 0
+    assert win.statusBar().currentMessage() == "Clique dentro do objeto."
+
+
+def test_esc_cancels(qapp, win):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    load_sg(qapp, win)
+    snap = snapshot(win)
+    win.show(); win.activateWindow(); qapp.processEvents()
+    win.rows[0].drop.click()
+    QTest.keyClick(win.view_orig.viewport(), Qt.Key_Escape)
+    qapp.processEvents()
+    assert armed_state(win) == (None, [False] * 3, [False, False])
+    assert win.statusBar().currentMessage() == "Conta-gotas cancelado."
+    click_view(qapp, win.view_orig, 200, 270)
+    settle(qapp, win)
+    assert snapshot(win) == snap
+
+
+def test_same_button_cancels_other_button_moves(qapp, win):
+    load_sg(qapp, win)
+    win.rows[0].drop.click()
+    win.rows[2].drop.click()
+    assert armed_state(win) == (2, [False, False, True], [True, True])
+    win.rows[2].drop.click()
+    assert armed_state(win) == (None, [False] * 3, [False, False])
+    assert win.statusBar().currentMessage() == "Conta-gotas cancelado."
+
+
+def test_pan_only_when_not_armed(qapp, win):
+    from PySide6.QtWidgets import QGraphicsView
+    load_sg(qapp, win)
+    snap = snapshot(win)
+    click_view(qapp, win.view_orig, 200, 270)        # not armed: nothing picked
+    settle(qapp, win)
+    assert snapshot(win) == snap
+    assert win.view_orig.dragMode() == QGraphicsView.ScrollHandDrag
+    win.rows[0].drop.click()
+    assert win.view_orig.dragMode() == win.view_prev.dragMode() == QGraphicsView.NoDrag
+    win.rows[0].drop.click()
+    assert win.view_orig.dragMode() == win.view_prev.dragMode() == QGraphicsView.ScrollHandDrag
+
+
+def test_reanalysis_and_new_image_disarm(qapp, win, monkeypatch, tmp_path):
+    load_sg(qapp, win)
+    snap = snapshot(win)
+    win.rows[0].drop.click()
+    win.sp_tol.setValue(win.sp_tol.value() + 1)
+    settle(qapp, win)
+    assert armed_state(win) == (None, [False] * 3, [False, False])
+    assert snapshot(win)[:3] == snap[:3]
+    img = tmp_path / "sg.png"
+    Image.fromarray(sage_green()).save(img)
+    monkeypatch.setattr(main_window.QFileDialog, "getOpenFileName", lambda *a, **k: (str(img), ""))
+    from PySide6.QtCore import QSettings
+    win.settings = QSettings(str(tmp_path / "s.ini"), QSettings.IniFormat)   # why: keep user settings untouched
+    win.rows[0].drop.click()
+    win.open_image()
+    assert armed_state(win)[0] is None
+    settle(qapp, win)
+
+
+def test_sampled_row_carried_over(qapp, win):
+    load_sg(qapp, win)
+    sage = row_of(win, SAGE)
+    win.rows[sage].drop.click()
+    click_view(qapp, win.view_orig, 200, 270)
+    settle(qapp, win)
+    win.sp_n.setValue(4)
+    settle(qapp, win)
+    (j,) = win.palette.edited
+    assert (win.palette.samples[j], win.palette.colors[j]) == (PATCH, SAGE)
+
+
+def test_preview_click_samples_image_not_filament(qapp, win, monkeypatch):
+    load_sg(qapp, win)
+    sage, green = row_of(win, SAGE), row_of(win, GREEN)
+    answer(monkeypatch, (255, 0, 0), [])
+    win.rows[green].swatch.click()                   # PATCH area is drawn red in the preview
+    settle(qapp, win)
+    oy, ox = win.analysis.offset
+    up = win.params.upsample
+    py, px = (200 - oy) * up + 1, (270 - ox) * up + 1
+    assert preview_px(win, 200 - oy, 270 - ox) == (255, 0, 0)
+    win.rows[sage].drop.click()
+    click_view(qapp, win.view_prev, py, px)
+    settle(qapp, win)
+    assert win.palette.samples[sage] == PATCH
+    assert win.pick_row is None
+
+
+def test_preview_and_original_give_same_sample(qapp, win):
+    load_sg(qapp, win)
+    oy, ox = win.analysis.offset
+    up = win.params.upsample
+    win.rows[0].drop.click()
+    click_view(qapp, win.view_orig, 100, 200)        # sage|green boundary: mixed window
+    settle(qapp, win)
+    via_orig = win.palette.samples[0]
+    win.rows[1].drop.click()
+    click_view(qapp, win.view_prev, (100 - oy) * up, (200 - ox) * up)
+    settle(qapp, win)
+    assert win.palette.samples[1] == via_orig == (189, 188, 136)
+
+
+def test_preview_click_outside_object(qapp, win):
+    load_sg(qapp, win)
+    snap = snapshot(win)
+    win.rows[0].drop.click()
+    click_view(qapp, win.view_prev, 4, 4)            # crop corner, background
+    settle(qapp, win)
+    assert snapshot(win) == snap
+    assert win.pick_row == 0
+    assert win.statusBar().currentMessage() == "Clique dentro do objeto."
+
+
+def test_3d_tab_click_keeps_pick_armed(qapp, win):
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    load_sg(qapp, win)
+    snap = snapshot(win)
+    win.tabs.setCurrentWidget(win.view3d)
+    settle(qapp, win)
+    win.rows[0].drop.click()
+    QTest.mouseClick(win.view3d, Qt.LeftButton, Qt.NoModifier, QPoint(50, 50))
+    settle(qapp, win)
+    assert snapshot(win) == snap
+    assert win.pick_row == 0
+
+
+def test_hint_survives_preview_of_previous_pick(qapp, win):
+    load_sg(qapp, win)
+    win.rows[0].drop.click()
+    click_view(qapp, win.view_orig, 200, 270)
+    win.rows[1].drop.click()                         # armed again before the first preview lands
+    settle(qapp, win)
+    assert win.pick_row == 1
+    assert win.statusBar().currentMessage() == \
+        "Clique na imagem para definir a cor na imagem da cor 2 (Esc cancela)."
+
+
+def edge_image():
+    img = sage_green()
+    img[150:250, 0:60] = (*SAGE, 255)                # object reaches the left image edge
+    return img
+
+
+def test_click_past_image_edge_picks_nothing(qapp, win):
+    win.rgba = edge_image()
+    win.reanalyze()
+    settle(qapp, win)
+    win.view_orig.set_image(win.rgba, refit=True)
+    assert win.analysis.offset[1] == 0
+    snap = snapshot(win)
+    win.rows[0].drop.click()
+    click_view(qapp, win.view_orig, 200, -1)
+    click_view(qapp, win.view_prev, (200 - win.analysis.offset[0]) * win.params.upsample, -1)
+    settle(qapp, win)
+    assert snapshot(win) == snap
+    assert win.pick_row == 0
+    assert win.statusBar().currentMessage() == "Clique dentro do objeto."
+
+
+def test_preview_click_floors_to_image_pixel(qapp, win):
+    load_sg(qapp, win)
+    oy, ox = win.analysis.offset
+    up = win.params.upsample
+    b = 200 - ox                                     # first green column, cropped frame
+    # why: an odd c makes round(c + 0.5) land on c + 1, so rounding instead of flooring changes the window
+    c, want = (b - 1, (197, 196, 150)) if (b - 1) % 2 else (b, (189, 188, 136))   # 3+2 or 2+3 sage+green columns
+    win.rows[0].drop.click()
+    click_view(qapp, win.view_prev, (100 - oy) * up + up - 1, c * up + up - 1)
+    settle(qapp, win)
+    assert win.palette.samples[0] == want
+
+
+def test_unarmed_drag_pans_and_double_click_fits(qapp, win):
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtTest import QTest
+    load_sg(qapp, win)
+    win.show()
+    v = win.view_orig
+    v.set_image(win.rgba, refit=True)
+    win.tabs.setCurrentWidget(v); qapp.processEvents()
+    v.resetTransform(); v.scale(4, 4); v.centerOn(200, 200); qapp.processEvents()
+    bar = v.horizontalScrollBar().value()
+    vp = v.viewport()
+    p0 = QPointF(vp.width() / 2, vp.height() / 2)
+    p1 = p0 + QPointF(60, 0)
+
+    def send(kind, pos, button, buttons):
+        qapp.sendEvent(vp, QMouseEvent(kind, pos, vp.mapToGlobal(pos), button, buttons, Qt.NoModifier))
+    send(QEvent.MouseButtonPress, p0, Qt.LeftButton, Qt.LeftButton)
+    send(QEvent.MouseMove, p1, Qt.NoButton, Qt.LeftButton)
+    send(QEvent.MouseButtonRelease, p1, Qt.LeftButton, Qt.NoButton)
+    qapp.processEvents()
+    assert v.horizontalScrollBar().value() < bar
+    QTest.mouseDClick(vp, Qt.LeftButton, Qt.NoModifier, p0.toPoint())
+    qapp.processEvents()
+    assert v.transform().m11() < 4
