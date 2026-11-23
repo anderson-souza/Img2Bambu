@@ -285,3 +285,59 @@ def test_sampled_row_carried_over(qapp, win):
     settle(qapp, win)
     (j,) = win.palette.edited
     assert (win.palette.samples[j], win.palette.colors[j]) == (PATCH, SAGE)
+
+
+def test_preview_click_samples_image_not_filament(qapp, win, monkeypatch):
+    load_sg(qapp, win)
+    sage, green = row_of(win, SAGE), row_of(win, GREEN)
+    answer(monkeypatch, (255, 0, 0), [])
+    win.rows[green].swatch.click()                   # PATCH area is drawn red in the preview
+    settle(qapp, win)
+    oy, ox = win.analysis.offset
+    up = win.params.upsample
+    py, px = (200 - oy) * up + 1, (270 - ox) * up + 1
+    assert preview_px(win, 200 - oy, 270 - ox) == (255, 0, 0)
+    win.rows[sage].drop.click()
+    click_view(qapp, win.view_prev, py, px)
+    settle(qapp, win)
+    assert win.palette.samples[sage] == PATCH
+    assert win.pick_row is None
+
+
+def test_preview_and_original_give_same_sample(qapp, win):
+    load_sg(qapp, win)
+    oy, ox = win.analysis.offset
+    up = win.params.upsample
+    win.rows[0].drop.click()
+    click_view(qapp, win.view_orig, 100, 200)        # sage|green boundary: mixed window
+    settle(qapp, win)
+    via_orig = win.palette.samples[0]
+    win.rows[1].drop.click()
+    click_view(qapp, win.view_prev, (100 - oy) * up, (200 - ox) * up)
+    settle(qapp, win)
+    assert win.palette.samples[1] == via_orig == (189, 188, 136)
+
+
+def test_preview_click_outside_object(qapp, win):
+    load_sg(qapp, win)
+    snap = snapshot(win)
+    win.rows[0].drop.click()
+    click_view(qapp, win.view_prev, 4, 4)            # crop corner, background
+    settle(qapp, win)
+    assert snapshot(win) == snap
+    assert win.pick_row == 0
+    assert win.statusBar().currentMessage() == "Clique dentro do objeto."
+
+
+def test_3d_tab_click_keeps_pick_armed(qapp, win):
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    load_sg(qapp, win)
+    snap = snapshot(win)
+    win.tabs.setCurrentWidget(win.view3d)
+    settle(qapp, win)
+    win.rows[0].drop.click()
+    QTest.mouseClick(win.view3d, Qt.LeftButton, Qt.NoModifier, QPoint(50, 50))
+    settle(qapp, win)
+    assert snapshot(win) == snap
+    assert win.pick_row == 0
