@@ -3,15 +3,27 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 import zipfile
 
 EXE_NAME = "bambu-studio.exe"
+FLATPAK_ID = "com.bambulab.BambuStudio"
+FLATPAK_SYSTEM_BIN = "/var/lib/flatpak/exports/bin"
 FLUSH_DEFAULT = "280"
 FLUSH_VECTOR_DEFAULT = "140"
 
 
+def is_linux():
+    return sys.platform.startswith("linux")
+
+
 def find_exe():
+    if is_linux():
+        cands = [shutil.which("bambu-studio") or "",
+                 os.path.join(os.path.expanduser("~"), ".local/share/flatpak/exports/bin", FLATPAK_ID),
+                 os.path.join(FLATPAK_SYSTEM_BIN, FLATPAK_ID)]
+        return next((c for c in cands if c and os.path.isfile(c)), None)
     cands = [os.path.join(os.environ.get(v, ""), "Bambu Studio", EXE_NAME)
              for v in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA")]
     try:
@@ -30,7 +42,21 @@ def find_exe():
 
 
 def presets_root():
+    if is_linux():
+        home = os.path.expanduser("~")
+        roots = [os.path.join(home, d, "BambuStudio", "system", "BBL")
+                 for d in (f".var/app/{FLATPAK_ID}/config", ".config")]
+        return next((r for r in roots if os.path.isdir(r)), roots[-1])
     return os.path.join(os.environ.get("APPDATA", ""), "BambuStudio", "system", "BBL")
+
+
+def work_dir():
+    if not is_linux():
+        return tempfile.mkdtemp(prefix="img2bambu_")
+    # hazard: the Flatpak sandbox has a private /tmp, so files there are invisible to the CLI
+    root = os.path.join(os.path.expanduser("~"), ".cache", "img2bambu")
+    os.makedirs(root, exist_ok=True)
+    return tempfile.mkdtemp(prefix="img2bambu_", dir=root)
 
 
 class PresetDB:
