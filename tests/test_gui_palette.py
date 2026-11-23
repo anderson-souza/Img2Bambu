@@ -416,3 +416,39 @@ def test_unarmed_drag_pans_and_double_click_fits(qapp, win):
     QTest.mouseDClick(vp, Qt.LeftButton, Qt.NoModifier, p0.toPoint())
     qapp.processEvents()
     assert v.transform().m11() < 4
+
+
+def test_smooth_spinbox(qapp, win):
+    sp = win.sp_smooth
+    assert (sp.minimum(), sp.maximum(), sp.singleStep(), sp.value()) == (0, 5, 1, 0)
+    assert sp.toolTip() == "Achata degradês antes de detectar as cores (0 = desligado)"
+    form = sp.parentWidget().layout().itemAt(0).layout()            # "2. Cores" form
+    assert form.labelForField(sp).text() == "Suavização:"
+    assert sp.parentWidget().title() == "2. Cores"
+
+
+def test_smooth_change_reanalyzes_and_keeps_edits(qapp, win, monkeypatch):
+    load_sg(qapp, win)
+    sage = row_of(win, SAGE)
+    answer(monkeypatch, (255, 255, 255), [])
+    win.rows[sage].swatch.click()
+    settle(qapp, win)
+    kept = (win.palette.colors[sage], win.palette.samples[sage])
+    seen, real = [], main_window.segment.analyze
+    monkeypatch.setattr(main_window.segment, "analyze", lambda img, p: (seen.append(p.smooth), real(img, p))[1])
+    previews, real_render = [], main_window.pipeline.render
+    monkeypatch.setattr(main_window.pipeline, "render", lambda *a: (previews.append(1), real_render(*a))[1])
+    win.sp_smooth.setValue(2)
+    assert win.statusBar().currentMessage() == "Detectando cores…"
+    settle(qapp, win)
+    assert seen == [2] and win.params.smooth == 2 and previews
+    (j,) = win.palette.edited
+    assert (win.palette.colors[j], win.palette.samples[j]) == kept
+
+
+def test_smooth_change_without_image_does_nothing(qapp, win, monkeypatch):
+    seen = []
+    monkeypatch.setattr(main_window.segment, "analyze", lambda *a: seen.append(a))
+    win.sp_smooth.setValue(3)
+    settle(qapp, win)
+    assert seen == [] and win.analysis is None
