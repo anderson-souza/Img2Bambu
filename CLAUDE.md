@@ -28,6 +28,7 @@ Img2Bambu: PNG/JPG image → multicolor 3MF project for Bambu Studio. Output = o
 - CLI: `python -m img2bambu image.png --width 150 --colors 3 --check` (`--stl-only` skips Bambu Studio; `--printer/--process/--filament` take Bambu system preset names). Packaged exe: `Img2Bambu.exe --cli image.png ...`, output via `IMG2BAMBU_LOG` env var (windowed build has no stdout).
 - Tests: `python -m pytest`; single test: `python -m pytest tests/test_core.py::test_merge_reduces_parts`; skip slow: `python -m pytest -m "not slow"`.
   - `slow` test slices a real image via the Bambu Studio CLI; it is auto-skipped unless Bambu Studio is installed and `../new abelha/Mascote Abelha com Placa ABELHÃO.png` exists (outside the repo).
+- Lint: `python -m ruff check .` (config in `pyproject.toml`; `ruff format` is intentionally not used).
 - GUI smoke (headless, offscreen Qt): `python tests/gui_smoke.py <image> <outdir> <screenshot.png>`
 - Build exe: `python -m PyInstaller --noconfirm img2bambu.spec` → `dist\Img2Bambu\` (ship whole folder). `build/` and `dist/` are artifacts.
 

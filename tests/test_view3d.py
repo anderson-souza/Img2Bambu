@@ -3,12 +3,12 @@ from PySide6.QtCore import QObject, QPoint, Qt
 from PySide6.QtGui import QVector3D
 from PySide6.QtQuick import QQuickWindow
 from PySide6.QtTest import QTest
+from test_core import synthetic
 
 from img2bambu import preview3d, segment
 from img2bambu.gui import view3d
 from img2bambu.gui.view3d import View3D
 from img2bambu.params import Params
-from test_core import synthetic
 
 
 @pytest.fixture(scope="module")

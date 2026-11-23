@@ -77,7 +77,7 @@ class View3D(QWidget):
         self.meshes = list(meshes)
         self.geos = [MeshGeometry(m) for m in self.meshes]
         self._root().setProperty("parts", [{"geometry": g, "color": QColor(*m.color)}
-                                           for g, m in zip(self.geos, self.meshes)])
+                                           for g, m in zip(self.geos, self.meshes, strict=True)])
         self._place()
         if reframe and self.meshes:
             self._reframe()
@@ -86,12 +86,12 @@ class View3D(QWidget):
         off = self._node("model").property("position")
         lo = [min(m.lo[i] for m in self.meshes) for i in range(3)]
         hi = [max(m.hi[i] for m in self.meshes) for i in range(3)]
-        cx, cy, cz = [(a + b) / 2 for a, b in zip(lo, hi)]
+        cx, cy, cz = [(a + b) / 2 for a, b in zip(lo, hi, strict=True)]
         # invariant: the container's -90° X rotation maps model (x, y, z) to scene (x, z, -y)
         self._node("orbit").setProperty(
             "position", QVector3D(cx + off.x(), cz + off.z(), -(cy + off.y())))
         self._node("orbit").setProperty("eulerRotation", QVector3D(-35, 0, 0))
-        self._node("camera").setProperty("z", 2 * max(b - a for a, b in zip(lo, hi)))
+        self._node("camera").setProperty("z", 2 * max(b - a for a, b in zip(lo, hi, strict=True)))
 
     def set_bed(self, bed):
         self.bed = bed

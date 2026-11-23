@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from .params import Params, Palette
+from .params import Palette, Params
 
 
 @dataclass
@@ -53,7 +53,8 @@ def _crop(rgba, sil):
 
 
 def _to_lab(rgb_rows):
-    return cv2.cvtColor(rgb_rows.reshape(-1, 1, 3).astype(np.uint8), cv2.COLOR_RGB2LAB).reshape(-1, 3).astype(np.float32)
+    lab = cv2.cvtColor(rgb_rows.reshape(-1, 1, 3).astype(np.uint8), cv2.COLOR_RGB2LAB)
+    return lab.reshape(-1, 3).astype(np.float32)
 
 
 def _to_rgb(lab_rows):

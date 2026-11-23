@@ -151,7 +151,7 @@ def sage_green():
 
 def _row_of(an, color):
     return min(range(len(an.palette.colors)),
-               key=lambda i: sum((a - b) ** 2 for a, b in zip(an.palette.colors[i], color)))
+               key=lambda i: sum((a - b) ** 2 for a, b in zip(an.palette.colors[i], color, strict=True)))
 
 
 def test_analysis_initial_samples_and_filaments():
@@ -161,7 +161,7 @@ def test_analysis_initial_samples_and_filaments():
     assert pal.edited == set()
     sage = _row_of(an, SAGE)
     assert pal.colors[sage] == SAGE                                  # filament = cluster median
-    assert max(abs(a - b) for a, b in zip(pal.samples[sage], SAGE)) <= 3   # sample = cluster center
+    assert max(abs(a - b) for a, b in zip(pal.samples[sage], SAGE, strict=True)) <= 3   # sample = cluster center
 
 
 def test_initial_sample_is_cluster_center_not_median():
@@ -172,7 +172,7 @@ def test_initial_sample_is_cluster_center_not_median():
     assert an.palette.colors[green] == GREEN
     lab = an.lab[an.labels[an.sil] == green].mean(0)
     mean_rgb = segment._to_rgb(lab[None, :])[0]
-    assert max(abs(a - b) for a, b in zip(an.palette.samples[green], mean_rgb)) <= 1
+    assert max(abs(a - b) for a, b in zip(an.palette.samples[green], mean_rgb, strict=True)) <= 1
     assert an.palette.samples[green] != GREEN
 
 
