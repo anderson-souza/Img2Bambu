@@ -557,3 +557,32 @@ def test_distance_is_cielab_not_opencv_scaled():
     a, c, b = (_row_of(an, segment._to_rgb(np.array([[L * 2.55, x + 128, y + 128]], np.float32))[0])
                for (L, x, y), _ in tones)
     assert an.palette.merges == {b: a}
+
+
+def test_edited_row_absorbs_instead_of_being_merged():
+    an = segment.analyze(stripes([((50, 0, 0), 5), ((55, 0, 0), 40), ((90, 0, 0), 55)]), Params(n_colors=3))
+    an.palette.edited = {0}                     # X 5% edited, closest to the unedited Y 40%
+    assert segment.auto_merge(an, an.palette, 2) == 2
+    assert an.palette.merges == {1: 0} and 0 in an.palette.active()
+
+
+def test_pair_of_edited_rows_is_skipped():
+    an = segment.analyze(stripes([((50, 0, 0), 20), ((54, 0, 0), 20), ((70, 0, 0), 60)]), Params(n_colors=3))
+    an.palette.edited = {0, 1}                  # A–B (ΔE 4) is the closest pair but both are edited
+    assert segment.auto_merge(an, an.palette, 2) == 2
+    assert an.palette.merges == {2: 1}          # next closest: B–C; B survives because it is edited
+
+
+def test_runs_out_of_allowed_pairs_with_more_edited_rows_than_filaments():
+    an = segment.analyze(stripes(EIGHT), Params(n_colors=8))
+    edited = {0, 2, 4, 6, 7}
+    an.palette.edited = set(edited)
+    assert segment.auto_merge(an, an.palette, 4) == 5
+    assert set(an.palette.active()) == edited
+    assert _acyclic(an.palette)
+
+
+def test_rerun_starts_from_suggested_base():
+    an = segment.analyze(stripes(EIGHT), Params(n_colors=8, filaments=1))
+    assert segment.auto_merge(an, an.palette, 0) == 8
+    assert an.palette.merges == {} and an.palette.base_index == an.base
