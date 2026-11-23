@@ -48,12 +48,9 @@ Key state: `Params` (user dimensions/tuning) and `Palette` (colors, base_index, 
 
 GUI (`gui/main_window.py`, PySide6): long work runs as `gui/worker.Task` (QRunnable on the global QThreadPool); each task carries a `tag` so stale analysis/preview results are discarded. Settings persisted with `QSettings`.
 
-## Bambu Studio CLI quirks (do not "fix" these away)
+## Bambu Studio CLI quirks
 
-- CLI exit code is unreliable (often crashes with 0xC0000005 after success); success is judged by checking output files exist.
-- CLI-exported 3MF leaves per-filament config arrays at length 1, which the GUI rejects as "invalid config". `patch_project` expands them to N, sets `filament_colour`, and rebuilds `flush_volumes_matrix` (N×N, zero diagonal) and `flush_volumes_vector` (2N).
-- Minimal 3MF must NOT include `Application` metadata — CLI crashes if the file claims to be a Bambu project without `project_settings`.
-- More than 4 parts triggers a warning (exceeds one AMS).
+Deliberate workarounds that look like bugs — see `.claude/rules/bambu-cli.md` (auto-loaded when editing `bambu.py`, `export3mf.py`, `pipeline.py`). Do not "fix" them away.
 
 ## Conventions
 
