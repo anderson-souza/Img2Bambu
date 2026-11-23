@@ -29,3 +29,7 @@ Desktop.ini
 
 # Local working images
 workdir/
+
+# Secrets
+.env
+.env.*

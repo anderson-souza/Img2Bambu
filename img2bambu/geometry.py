@@ -40,7 +40,9 @@ def to_polys(m, mm_per_px_up, simplify_mm):
         p = Polygon(conv(c), holes).buffer(0).simplify(simplify_mm, preserve_topology=True)
         if not p.is_empty:
             polys.append(p)
-    g = unary_union(polys)
+    # why: diagonal pixel links leave regions/holes touching at a single point,
+    # which extrudes non-manifold; a 1 µm inset splits those points apart
+    g = unary_union(polys).buffer(-1e-3, join_style="mitre")
     if g.is_empty:
         return []
     return list(g.geoms) if isinstance(g, MultiPolygon) else [g]
