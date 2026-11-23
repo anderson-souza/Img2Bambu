@@ -3,7 +3,7 @@
 **Approved**: 2026-11-23 - user: "aprovado"
 **Settled mid-build:** none
 **Review:** sent at 70112e6
-**Fix pass:**
+**Fix pass:** done - merge cycles are refused and keep the previous merge (P1), `Nada para desfazer.` survives a running preview (P2), steps that would change nothing are skipped (P3); P4 and P5 left as reported
 
 ## Problem
 

@@ -177,7 +177,7 @@ class MainWindow(QMainWindow):
         self.history = History()
         self.detecting = False
         self.stale2d = False            # preview asked for while detecting
-        self.undone = None              # label of the undo still shown in the status bar
+        self.undo_msg = None            # result of Ctrl+Z, kept in the status bar until the next change
 
         self.debounce = QTimer(self, singleShot=True, interval=350)
         self.debounce.timeout.connect(self.run_preview)
@@ -479,9 +479,12 @@ class MainWindow(QMainWindow):
         if target is None or target < 0:
             self.palette.merges.pop(i, None)
         else:
-            self.palette.merges[i] = target
-            if self.palette.resolve(target) == i:      # why: merging into own descendant would form a cycle
-                self.palette.merges.pop(i)
+            before = self.palette.merges.pop(i, None)
+            if self.palette.resolve(target) != i:
+                self.palette.merges[i] = target
+            else:                                      # why: merging into own descendant would form a cycle
+                if before is not None:
+                    self.palette.merges[i] = before
                 QMessageBox.warning(self, "Mesclar", "Essa combinação criaria um ciclo de mesclagem.")
         if self.palette.resolve(self.palette.base_index) != self.palette.base_index:
             self.palette.base_index = self.palette.resolve(self.palette.base_index)
@@ -581,7 +584,7 @@ class MainWindow(QMainWindow):
         self.show_count(out[1])
         # why: a preview from an earlier pick must not hide the hint of the pick still armed
         self.status(self.pick_hint() if self.pick_row is not None
-                    else f"Desfeito: {self.undone}." if self.undone
+                    else self.undo_msg if self.undo_msg
                     else "Prévia pronta. Ajuste as cores ou clique em Gerar 3MF.")
 
     def tab_changed(self, i):
@@ -624,19 +627,29 @@ class MainWindow(QMainWindow):
     def forget_history(self):
         self.history.clear()
         self.last = self.snapshot()
-        self.undone = None
+        self.undo_msg = None
 
     def record(self, label, key=None):
         before, self.last = self.last, self.snapshot()
         self.history.record(label, before, self.last, key)
-        self.undone = None
+        self.undo_msg = None
+
+    def no_effect(self, label, st):
+        # why: a run of a field back to its start still differs by the detection that ran meanwhile
+        now = self.snapshot()
+        return (not now.pending and st.values == now.values
+                and (st.palette == now.palette or (st.pending and label in self.fields)))
 
     def undo(self):
         step = self.history.undo()
+        while step is not None and self.no_effect(*step):
+            step = self.history.undo()
         if step is None:
-            self.status("Nada para desfazer.")
+            self.undo_msg = "Nada para desfazer."
+            self.status(self.undo_msg)
             return
-        self.undone, st = step
+        label, st = step
+        self.undo_msg = f"Desfeito: {label}."
         for sp, v in zip(self.fields.values(), st.values, strict=True):
             sp.blockSignals(True); sp.setValue(v); sp.blockSignals(False)
         self.read_params()
@@ -657,7 +670,7 @@ class MainWindow(QMainWindow):
         else:
             self.run_preview()
         self.last = self.snapshot()
-        self.status(f"Desfeito: {self.undone}.")
+        self.status(self.undo_msg)
 
     # ---------- export ----------
     def generate(self):

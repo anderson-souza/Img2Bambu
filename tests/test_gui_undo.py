@@ -389,3 +389,76 @@ def test_undo_during_export_leaves_the_export_alone(qapp, slow, monkeypatch, tmp
     gate.set()
     settle(qapp, w)
     assert got == [(180, streak)]
+
+
+def test_refused_merge_cycle_warns_keeps_the_merge_and_is_no_step(qapp, slow, monkeypatch):
+    w, warned = slow, []
+    load_sg(qapp, w)
+    monkeypatch.setattr(main_window.QMessageBox, "warning", lambda *a: warned.append(a))
+
+    def merge(i, j):
+        w.rows[i].merge.setCurrentIndex(w.rows[i].merge.findData(j))
+    merge(0, 1)
+    merge(1, 2)
+    assert not warned and len(w.history.steps) == 2
+    merge(1, 0)
+    merge(2, 0)
+    assert len(warned) == 2 and w.palette.merges == {0: 1, 1: 2}
+    assert w.rows[1].merge.currentData() == 2 and w.rows[2].merge.currentData() == -1
+    assert len(w.history.steps) == 2
+
+
+def test_nothing_to_undo_survives_the_preview_still_running(qapp, slow):
+    w = slow
+    load(qapp, w)
+    w.sp_w.setValue(180)
+    press(qapp, w); press(qapp, w)
+    settle(qapp, w)
+    assert msg(w) == NOTHING
+
+
+@pytest.mark.parametrize("manual", [False, True])
+def test_detection_field_back_to_start_is_a_step_only_if_work_was_lost(qapp, win, manual):
+    w = win
+    load_sg(qapp, w)
+    if manual:
+        w.rows[2].merge.setCurrentIndex(w.rows[2].merge.findData(1))
+        settle(qapp, w)
+    before = copy.deepcopy(w.palette)
+    w.history.clock = lambda: 1.0
+    w.sp_n.setValue(4); w.sp_n.setValue(3)
+    settle(qapp, w)
+    assert (w.palette != before) == manual
+    press(qapp, w)
+    settle(qapp, w)
+    assert w.palette == before
+    assert msg(w) == ("Desfeito: Nº de cores." if manual else NOTHING)
+
+
+def test_field_back_to_start_across_a_detection_is_no_step(qapp, win):
+    w = win
+    load_sg(qapp, w)
+    w.sp_n.setValue(5)
+    w.history.clock = lambda: 1.0
+    w.sp_w.setValue(155)
+    settle(qapp, w)
+    w.sp_w.setValue(150)
+    settle(qapp, w)
+    press(qapp, w)
+    settle(qapp, w)
+    assert w.sp_n.value() == 3 and msg(w) == "Desfeito: Nº de cores."
+
+
+def test_row_edit_during_detection_is_still_undone(qapp, slow, analyses, monkeypatch):
+    w = slow
+    load_sg(qapp, w)
+    answer(monkeypatch, (1, 2, 250), [])
+    analyses[1].clear()
+    w.sp_n.setValue(4)
+    w.rows[0].swatch.click()
+    analyses[1].set()
+    settle(qapp, w)
+    assert (1, 2, 250) in w.palette.colors
+    press(qapp, w)
+    settle(qapp, w)
+    assert (1, 2, 250) not in w.palette.colors and len(w.rows) == 4
