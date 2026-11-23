@@ -30,6 +30,7 @@ Img2Bambu: PNG/JPG image → multicolor 3MF project for Bambu Studio. Output = o
   - `slow` test slices a real image via the Bambu Studio CLI; it is auto-skipped unless Bambu Studio is installed and `../new abelha/Mascote Abelha com Placa ABELHÃO.png` exists (outside the repo).
 - Lint: `python -m ruff check .` (config in `pyproject.toml`; `ruff format` is intentionally not used).
 - GUI smoke (headless, offscreen Qt): `python tests/gui_smoke.py <image> <outdir> <screenshot.png>`
+  - Writes `QSettings`: on Linux, prefix `XDG_CONFIG_HOME=<scratch>`. With the Flatpak, `<outdir>` must be under home (a refused folder opens a modal dialog).
 - Build exe: `python -m PyInstaller --noconfirm img2bambu.spec` → `dist\Img2Bambu\` (ship whole folder). `build/` and `dist/` are artifacts.
 
 ## Architecture
@@ -41,6 +42,8 @@ Pipeline (`pipeline.export`) — same path for CLI (`__main__.py`) and GUI:
 3. `geometry.build_parts` — contours → shapely polygons (mm, Y up) → `trimesh` extrusions. Base at z=0..base_mm, colors at base_mm..+relief_mm. Raises if any mesh not watertight.
 4. `export3mf` — write per-color STLs always; if Bambu Studio found, write a *minimal* 3MF (one object, components = parts, extruder metadata per part) as CLI input.
 5. `bambu.export_project` — run Bambu Studio CLI (`--load-settings machine;process`, `--load-filaments` ×N, `--export-3mf`), then `patch_project` fixes the result. Optional `slice_check` slices the project to verify filament changes.
+
+On Linux, `pipeline.export` first asks the Flatpak sandbox whether it can read the output folder (`bambu.sandbox_sees`) and raises before writing anything.
 
 Key state: `Params` (user dimensions/tuning) and `Palette` (colors, base_index, merges, streak set) in `params.py`. `Palette.active()` = labels not merged away.
 
@@ -56,3 +59,6 @@ Deliberate workarounds that look like bugs — see `.claude/rules/bambu-cli.md` 
 
 - Comments are sparse and prefixed `why:`, `hazard:` or `invariant:` — no narration comments.
 - Error/progress messages shown to users are Portuguese.
+- CI runs on Windows and Ubuntu without Bambu Studio. Platform tests patch `bambu.sys.platform` and set both `HOME` and `USERPROFILE`.
+- Tests must not write real settings: patch `win.settings.setValue` (`test_new_image_starts_fresh` still does write).
+- Tests import shared helpers as `from test_core import ...` (`tests/` is not a package).
