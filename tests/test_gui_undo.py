@@ -1,6 +1,10 @@
+import copy
+
 import pytest
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
+from test_core import GREEN, PATCH, SAGE
+from test_gui_palette import answer, load_sg, pcts, preview_px, row_of
 from test_gui_preview3d import calls, load, presets, settle, win  # noqa: F401 — why: shared fixtures
 
 NOTHING = "Nada para desfazer."
@@ -122,3 +126,102 @@ def test_quick_run_in_a_field_is_one_step(qapp, win):
     win.sp_base.setValue(11)
     press(qapp, win)
     assert win.sp_base.value() == 10 and msg(win) == "Desfeito: Espessura da base."
+
+
+def view_of(w):
+    """Everything a user sees of the colors, plus the state behind it."""
+    return (w.palette, pcts(w), [r.sample.styleSheet() for r in w.rows], [r.swatch.styleSheet() for r in w.rows],
+            [r.base.isChecked() for r in w.rows], [r.streak.isChecked() for r in w.rows],
+            [r.merge.currentData() for r in w.rows], w.view_prev.item.pixmap().toImage())
+
+
+def change_and_undo(qapp, w, change, label):
+    settle(qapp, w)
+    before = copy.deepcopy(view_of(w)[:-1]) + view_of(w)[-1:]
+    n = len(w.history.steps)
+    change()
+    settle(qapp, w)
+    assert w.palette != before[0] and len(w.history.steps) == n + 1
+    press(qapp, w)
+    settle(qapp, w)
+    assert view_of(w) == before
+    assert len(w.history.steps) == n and msg(w) == f"Desfeito: {label}."
+
+
+@pytest.mark.parametrize("button, title", [("sample", "Cor na imagem"), ("swatch", "Cor do filamento")])
+def test_color_dialog_undo(qapp, slow, monkeypatch, button, title):
+    load_sg(qapp, slow)
+    answer(monkeypatch, PATCH, [])
+    sage = row_of(slow, SAGE)
+    change_and_undo(qapp, slow, getattr(slow.rows[sage], button).click, title)
+    assert slow.palette.edited == set()
+
+
+def test_eyedropper_undo(qapp, slow):
+    w = slow
+    load_sg(qapp, w)
+    sage = row_of(w, SAGE)
+
+    def pick():
+        w.rows[sage].drop.click()
+        w.pick_at(180, 250)
+    change_and_undo(qapp, w, pick, "Cor na imagem")
+    assert preview_px(w, 180, 250) != SAGE
+
+
+def test_base_streak_and_merge_undo(qapp, slow):
+    w = slow
+    load_sg(qapp, w)
+    sage, green = row_of(w, SAGE), row_of(w, GREEN)
+    other = next(r for r in w.rows if not r.base.isChecked())
+    change_and_undo(qapp, w, other.base.click, "Base")
+    change_and_undo(qapp, w, w.rows[sage].streak.click, "Filtro reflexo")
+    combo = w.rows[sage].merge
+    change_and_undo(qapp, w, lambda: combo.setCurrentIndex(combo.findData(green)), "Mesclagem")
+    base = w.palette.base_index                # merging the base color away also moves the base
+    combo = w.rows[base].merge
+    change_and_undo(qapp, w, lambda: combo.setCurrentIndex(1), "Mesclagem")
+    assert w.rows[base].base.isChecked()
+
+
+def test_color_rows_never_group(qapp, win):
+    load_sg(qapp, win)
+    win.history.clock = lambda: 1.0
+    win.rows[0].streak.click(); win.rows[0].streak.click()
+    assert len(win.history.steps) == 2
+
+
+def test_filter_fields_undo_preview_and_group(qapp, win):
+    load(qapp, win)
+    win.history.clock = lambda: 1.0
+    before = win.view_prev.item.pixmap().toImage()
+    for sp, label in ((win.sp_detail, "Detalhe mínimo"), (win.sp_streak, "Filtro reflexo (raio)")):
+        old = sp.value()
+        for v in (2, 3):
+            sp.setValue(v)
+        settle(qapp, win)
+        press(qapp, win)
+        settle(qapp, win)
+        assert sp.value() == old and msg(win) == f"Desfeito: {label}."
+        assert win.view_prev.item.pixmap().toImage() == before
+
+
+def test_actions_that_change_nothing_are_no_step(qapp, slow, monkeypatch):
+    w = slow
+    load_sg(qapp, w)
+    answer(monkeypatch, None, [])
+    w.rows[0].sample.click()
+    w.rows[w.palette.base_index].base.click()
+    w.rows[0].drop.click(); w.rows[0].drop.click()
+    assert w.history.steps == []
+
+
+def test_undo_disarms_the_eyedropper(qapp, slow):
+    w = slow
+    load_sg(qapp, w)
+    w.sp_w.setValue(180)
+    w.rows[0].drop.click()
+    press(qapp, w)
+    settle(qapp, w)
+    assert w.pick_row is None and not w.view_prev.picking and not w.rows[0].drop.isChecked()
+    assert msg(w) == "Desfeito: Largura."

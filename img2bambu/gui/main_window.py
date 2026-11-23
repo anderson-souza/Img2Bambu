@@ -148,7 +148,7 @@ class ColorRow(QWidget):
         if c.isValid():
             values[self.idx] = (c.red(), c.green(), c.blue())
             self.win.palette.edited.add(self.idx)
-            self.win.palette_changed()
+            self.win.palette_changed(title)
 
 
 class MainWindow(QMainWindow):
@@ -208,6 +208,7 @@ class MainWindow(QMainWindow):
         split.setStretchFactor(0, 3); split.setStretchFactor(1, 2)
         self.setCentralWidget(split)
         self.fields = {
+            "Detalhe mínimo": self.sp_detail, "Filtro reflexo (raio)": self.sp_streak,
             "Largura": self.sp_w, "Espessura da base": self.sp_base, "Relevo das cores": self.sp_relief,
         }
         for label, sp in self.fields.items():
@@ -413,6 +414,7 @@ class MainWindow(QMainWindow):
         if an.note:
             self.log_msg(an.note)
         self.apply_auto_merge()
+        self.last = self.snapshot()
         self.build_rows()
         self.run_preview()
 
@@ -458,11 +460,11 @@ class MainWindow(QMainWindow):
 
     def set_base(self, i):
         self.palette.base_index = i
-        self.palette_changed()
+        self.palette_changed("Base")
 
     def set_streak(self, i, on):
         (self.palette.streak.add if on else self.palette.streak.discard)(i)
-        self.palette_changed()
+        self.palette_changed("Filtro reflexo")
 
     def set_merge(self, i):
         target = self.rows[i].merge.currentData()
@@ -475,7 +477,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Mesclar", "Essa combinação criaria um ciclo de mesclagem.")
         if self.palette.resolve(self.palette.base_index) != self.palette.base_index:
             self.palette.base_index = self.palette.resolve(self.palette.base_index)
-        self.palette_changed()
+        self.palette_changed("Mesclagem")
 
     def toggle_pick(self, i):
         if self.pick_row == i:
@@ -530,9 +532,10 @@ class MainWindow(QMainWindow):
         self.palette.samples[i] = rgb
         self.palette.edited.add(i)
         self.disarm()
-        self.palette_changed()
+        self.palette_changed("Cor na imagem")
 
-    def palette_changed(self):
+    def palette_changed(self, label):
+        self.record(label)
         self.refresh_rows()
         self.debounce.start()
 
@@ -601,7 +604,7 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, e)
 
     def snapshot(self):
-        return [sp.value() for sp in self.fields.values()]
+        return [sp.value() for sp in self.fields.values()], copy.deepcopy(self.palette)
 
     def record(self, label, key=None):
         before, self.last = self.last, self.snapshot()
@@ -613,10 +616,14 @@ class MainWindow(QMainWindow):
         if step is None:
             self.status("Nada para desfazer.")
             return
-        self.undone, values = step
+        self.undone, (values, palette) = step
         for sp, v in zip(self.fields.values(), values, strict=True):
             sp.blockSignals(True); sp.setValue(v); sp.blockSignals(False)
         self.debounce.stop()
+        self.palette = palette
+        if palette is not None:
+            self.disarm()
+            self.refresh_rows()
         self.run_preview()
         self.last = self.snapshot()
         self.status(f"Desfeito: {self.undone}.")
