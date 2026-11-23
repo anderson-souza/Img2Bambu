@@ -3,8 +3,8 @@ import os
 import subprocess
 
 import numpy as np
-from PySide6.QtCore import QSettings, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QColor, QImage, QKeySequence, QPainter, QPixmap, QShortcut
+from PySide6.QtCore import QSettings, Qt, QThreadPool, QTimer, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QImage, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -623,7 +623,9 @@ class MainWindow(QMainWindow):
 
     # ---------- misc ----------
     def browse_exe(self):
-        p, _ = QFileDialog.getOpenFileName(self, "bambu-studio.exe", self.ed_exe.text(), "Executável (*.exe)")
+        p, _ = QFileDialog.getOpenFileName(self, "Bambu Studio" if bambu.is_linux() else "bambu-studio.exe",
+                                           self.ed_exe.text(),
+                                           "Todos (*)" if bambu.is_linux() else "Executável (*.exe)")
         if p:
             self.ed_exe.setText(p)
 
@@ -640,7 +642,7 @@ class MainWindow(QMainWindow):
     def open_dir(self):
         d = self.ed_out.text().strip()
         if d and os.path.isdir(d):
-            os.startfile(d)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.abspath(d)))
 
     def status(self, msg):
         self.statusBar().showMessage(msg)
