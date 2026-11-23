@@ -2,8 +2,8 @@
 
 **Approved**: 2026-11-22 - user: "aprovado"
 **Settled mid-build:** none
-**Review:** <pending>
-**Fix pass:** <pending>
+**Review:** sent at 41fbcca
+**Fix pass:** done - no code changes needed; finding 1: corrected the cost figure in Out of scope (reduced-resolution filtering stays out); finding 2 (watertight failure on the sample image at every level, incl. 0) is pre-existing and outside this feature; finding 3 is informational and consistent with default off
 
 ## Problem
 
@@ -121,7 +121,7 @@ The CLI accepts the same level and hands it to the same analysis.
 | Bilateral or median filter | user chose mean-shift. Median 5 was measured and erases contours and leaves |
 | Showing the smoothed image in the Original tab | Original shows what was loaded, and the eyedropper reads the original (user choice) |
 | Persisting "Suavização" across sessions | the other tuning fields (Nº de cores, Detalhe mínimo) are not persisted |
-| Running the filter at reduced resolution | measured ~1.7 s at 3000×3200 for level-5-like strength, in the background worker |
+| Running the filter at reduced resolution | runs in the background worker; review measured analysis at 3000×3200 going from 1.97 s (level 0) to 3.33 s (level 3) and 5.51 s (level 5) |
 | Smoothing inside `build_masks` / `clean` | the request scopes it to analysis. Cleaning is improvement 5 |
 
 ## Assumptions
