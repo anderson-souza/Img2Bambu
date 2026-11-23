@@ -165,10 +165,10 @@ def auto_merge(an: Analysis, palette: Palette, n):
     k = len(palette.colors)
     lab = assign(an, palette)
     share = np.bincount(lab[lab >= 0], minlength=k) / max(1, int((lab >= 0).sum()))
-    # why: OpenCV's 8-bit LAB stores L as L*·2.55, which would let lightness outweigh hue
     edits = any(tuple(s) != an.samples[i] for i, s in enumerate(palette.samples))
     # why: same basis as assign - exact k-means centers until a sample is edited
     ref = _to_lab(np.array([tuple(s) for s in palette.samples])) if edits else an.centers
+    # why: OpenCV's 8-bit LAB stores L as L*·2.55, which would let lightness outweigh hue
     cie = np.asarray(ref, np.float64) * (100 / 255, 1, 1)
     cen = dict(enumerate(cie))
     w = {i: float(share[i]) for i in range(k)}

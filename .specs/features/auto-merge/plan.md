@@ -2,8 +2,8 @@
 
 **Approved**: 2026-11-22 - user: "approve"
 **Settled mid-build:** none
-**Review:** <pending>
-**Fix pass:** <pending>
+**Review:** sent at e5c1d9e
+**Fix pass:** done - findings 1-3: tests that fail under a Ward cost, under a fixed distance basis (always centers or always samples) and under another tie-break; finding 5: moved the `why:` comment to its line; finding 4 (Filamentos = 1 and the singular "1 filamentos") is a product decision, taken to the user; the watertight export failure on the sample image is pre-existing
 
 ## Problem
 

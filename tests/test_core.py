@@ -637,3 +637,37 @@ def test_cli_filaments_out_of_range_exits_2(monkeypatch, capsys, bad):
         cli.main(["missing.png", "--filaments", bad])
     assert e.value.code == 2 and called == []
     assert "--filaments" in capsys.readouterr().err
+
+
+def test_distance_ignores_area():
+    # C 40% and C' 40% are ΔE 6 apart; D 2% is ΔE 15 from C'. Plain distance merges C+C'; an
+    # area-weighted (Ward) cost, 6·√20 ≈ 27 vs 15·√(80/42) ≈ 21, would fold the small D in first
+    tones = [((20, 0, 0), 40), ((26, 0, 0), 40), ((41, 0, 0), 2), ((85, 0, 0), 18)]
+    pal = segment.analyze(stripes(tones), Params(n_colors=4, filaments=3)).palette
+    assert pal.merges == {1: 0}
+
+
+def _cv_lab(L):
+    return [L * 255 / 100, 128, 128]
+
+
+def test_unedited_rows_are_compared_by_kmeans_centers():
+    an = segment.analyze(stripes([((30, 0, 0), 30), ((50, 0, 0), 30), ((70, 0, 0), 40)]), Params(n_colors=3))
+    an.centers = np.array([_cv_lab(30), _cv_lab(60), _cv_lab(65)], np.float32)   # samples still say 30/50/70
+    segment.auto_merge(an, an.palette, 2)
+    assert an.palette.merges == {1: 2}          # centers decide (B–C 5), not samples (A–B = B–C = 20)
+
+
+def test_edited_sample_switches_to_samples():
+    an = segment.analyze(stripes([((30, 0, 0), 30), ((50, 0, 0), 30), ((70, 0, 0), 40)]), Params(n_colors=3))
+    an.centers = np.array([_cv_lab(30), _cv_lab(60), _cv_lab(65)], np.float32)
+    an.palette.samples[0] = segment._to_rgb(np.array([_cv_lab(45)], np.float32))[0]
+    segment.auto_merge(an, an.palette, 2)
+    assert an.palette.merges == {1: 0}          # samples decide (A 45 – B 50, equal shares); centers: B–C
+
+
+def test_equal_distances_merge_the_lower_pair():
+    an = segment.analyze(stripes([((30, 0, 0), 30), ((50, 0, 0), 30), ((70, 0, 0), 40)]), Params(n_colors=3))
+    an.centers = np.array([_cv_lab(30), _cv_lab(50), _cv_lab(70)], np.float32)    # A–B == B–C exactly
+    segment.auto_merge(an, an.palette, 2)
+    assert an.palette.merges == {1: 0}          # pair (0, 1) before (1, 2); equal shares -> lower survives
