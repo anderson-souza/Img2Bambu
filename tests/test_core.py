@@ -586,3 +586,54 @@ def test_rerun_starts_from_suggested_base():
     an = segment.analyze(stripes(EIGHT), Params(n_colors=8, filaments=1))
     assert segment.auto_merge(an, an.palette, 0) == 8
     assert an.palette.merges == {} and an.palette.base_index == an.base
+
+
+def _cli_fil(monkeypatch, tmp_path, capsys, *extra):
+    from PIL import Image
+
+    from img2bambu import __main__ as cli
+    img = tmp_path / "sg.png"
+    Image.fromarray(sage_green()).save(img)
+    seen, real = [], segment.analyze
+    monkeypatch.setattr(cli.segment, "analyze", lambda path, p: (seen.append(p.filaments), real(path, p))[1])
+    assert cli.main([str(img), "--stl-only", "--colors", "4", "--out", str(tmp_path / "out"), *extra]) == 0
+    out = capsys.readouterr().out.splitlines()
+    return seen, out, [line for line in out if line.startswith("STL:")]
+
+
+def test_cli_filaments_flag_merges_and_prints(monkeypatch, tmp_path, capsys):
+    seen, out, stls = _cli_fil(monkeypatch, tmp_path, capsys, "--filaments", "3")
+    assert seen == [3]
+    i = next(k for k, line in enumerate(out) if line.startswith("Paleta:"))
+    assert out[i + 1] == "Mesclagem automática: 4 cores → 3 filamentos."
+    an = segment.analyze(sage_green(), Params(n_colors=4))
+    from img2bambu.params import hex_color
+    assert out[i + 2] == f"Mesclada: {hex_color(_color(an, PATCH))} → {hex_color(_color(an, GREEN))}"
+    assert not out[i + 3].startswith("Mesclada:")
+    assert len(stls) == 3                       # base + sage + green; the patch went into green
+
+
+def _color(an, rgb):
+    return an.palette.colors[_row_of(an, rgb)]
+
+
+def test_cli_filaments_defaults_to_zero(monkeypatch, tmp_path, capsys):
+    seen, out, stls = _cli_fil(monkeypatch, tmp_path, capsys)
+    assert seen == [0] and len(stls) == 4
+    assert not any(line.startswith(("Mesclagem", "Mesclada")) for line in out)
+
+
+def test_cli_filaments_8_accepted(monkeypatch, tmp_path, capsys):
+    assert _cli_fil(monkeypatch, tmp_path, capsys, "--filaments", "8")[0] == [8]
+
+
+@pytest.mark.parametrize("bad", ["9", "-1", "2.5", "x"])
+def test_cli_filaments_out_of_range_exits_2(monkeypatch, capsys, bad):
+    from img2bambu import __main__ as cli
+    called = []
+    monkeypatch.setattr(cli.segment, "load_image", lambda *a: called.append(a))
+    monkeypatch.setattr(cli.segment, "analyze", lambda *a: called.append(a))
+    with pytest.raises(SystemExit) as e:
+        cli.main(["missing.png", "--filaments", bad])
+    assert e.value.code == 2 and called == []
+    assert "--filaments" in capsys.readouterr().err

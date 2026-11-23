@@ -16,6 +16,8 @@ def main(argv=None):
     ap.add_argument("--colors", type=int, default=3)
     ap.add_argument("--smooth", type=int, default=0, choices=range(6), metavar="0-5",
                     help="suavização (mean-shift) antes de detectar as cores; 0 = desligado")
+    ap.add_argument("--filaments", type=int, default=0, choices=range(9), metavar="0-8",
+                    help="mesclar as cores mais parecidas até sobrar esse número; 0 = desligado")
     ap.add_argument("--printer", default="Bambu Lab A1 0.4 nozzle")
     ap.add_argument("--process", default=None)
     ap.add_argument("--filament", default=None)
@@ -23,11 +25,17 @@ def main(argv=None):
     ap.add_argument("--stl-only", action="store_true")
     a = ap.parse_args(argv)
 
-    params = Params(width_mm=a.width, base_mm=a.base, relief_mm=a.relief, n_colors=a.colors, smooth=a.smooth)
+    params = Params(width_mm=a.width, base_mm=a.base, relief_mm=a.relief, n_colors=a.colors, smooth=a.smooth,
+                    filaments=a.filaments)
     an = segment.analyze(a.image, params)
     if an.note:
         print(an.note)
-    print("Paleta:", [hex_color(c) for c in an.palette.colors], "base:", an.palette.base_index)
+    pal = an.palette
+    print("Paleta:", [hex_color(c) for c in pal.colors], "base:", pal.base_index)
+    if pal.merges:
+        print(f"Mesclagem automática: {len(pal.colors)} cores → {len(pal.active())} filamentos.")
+        for i in sorted(pal.merges):
+            print(f"Mesclada: {hex_color(pal.colors[i])} → {hex_color(pal.colors[pal.resolve(i)])}")
     outdir = a.out or os.path.join(os.path.dirname(os.path.abspath(a.image)), "img2bambu_saida")
     name = os.path.splitext(os.path.basename(a.image))[0]
 
