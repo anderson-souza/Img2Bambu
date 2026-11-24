@@ -461,3 +461,228 @@ def test_cli_smooth_out_of_range_exits_2(monkeypatch, capsys, bad):
         cli.main(["missing.png", "--smooth", bad])
     assert e.value.code == 2 and called == []
     assert "--smooth" in capsys.readouterr().err
+
+
+def stripes(tones):
+    """1000x50 horizontal stripes on a transparent border; tones = [(L, a, b) real LAB, share %], dark -> light."""
+    rows = []
+    for (L, a, b), pct in tones:
+        rgb = segment._to_rgb(np.array([[L * 255 / 100, a + 128, b + 128]], np.float32))[0]
+        rows += [rgb] * (pct * 10)
+    img = np.zeros((len(rows) + 20, 70, 4), np.uint8)
+    img[10:-10, 10:-10, :3] = np.array(rows, np.uint8)[:, None, :]
+    img[10:-10, 10:-10, 3] = 255
+    return img
+
+
+def _acyclic(pal):
+    act = set(pal.active())
+    return all(pal.resolve(i) in act for i in range(len(pal.colors)))
+
+
+def test_filaments_defaults_off():
+    assert Params().filaments == 0
+
+
+def test_filaments_zero_is_todays_analysis():
+    img = sage_green()
+    an = segment.analyze(img, Params(n_colors=4))
+    sil, _ = segment.silhouette(img, Params())
+    rgba, sil, _ = segment._crop(img, sil)
+    labels, colors, centers, _ = segment.kmeans_palette(rgba, sil, 4)
+    assert an.palette.merges == {}
+    assert an.palette.base_index == segment.suggest_base(labels, sil, 4) == an.base
+    assert np.array_equal(an.labels, labels) and an.palette.colors == colors
+    assert an.palette.samples == segment._to_rgb(centers)
+
+
+EIGHT = [((10 + 11 * i, 0, 0), 12 if i < 4 else 13) for i in range(8)]
+
+
+@pytest.mark.parametrize("n,merged", [(8, 0), (9, 0), (7, 1), (0, 0)])
+def test_filaments_at_or_above_rows_merges_nothing(n, merged):
+    an = segment.analyze(stripes(EIGHT), Params(n_colors=8, filaments=n))
+    assert len(an.palette.colors) == 8
+    assert len(an.palette.merges) == merged
+
+
+@pytest.mark.parametrize("m", range(1, 8))
+def test_filaments_leaves_exactly_m_active(m):
+    pal = segment.analyze(stripes(EIGHT), Params(n_colors=8, filaments=m)).palette
+    assert len(pal.active()) == m
+    assert _acyclic(pal)
+    assert pal.base_index in pal.active()
+
+
+def test_closest_pair_merges_into_larger():
+    # A 40%, A' (ΔE 5 from A) 10%, B 50%
+    an = segment.analyze(stripes([((40, 0, 0), 40), ((45, 0, 0), 10), ((80, 0, 0), 50)]),
+                         Params(n_colors=3, filaments=2))
+    assert an.palette.merges == {1: 0}
+
+
+def test_small_distinct_color_survives_close_large_ones_merge():
+    # C 30% and C' 30% close; D 2% far from all; E 38% far
+    tones = [((20, 0, 0), 30), ((26, 0, 0), 30), ((55, 60, 0), 2), ((85, 0, 0), 38)]
+    pal = segment.analyze(stripes(tones), Params(n_colors=4, filaments=3)).palette
+    assert pal.merges == {1: 0}                 # equal shares -> lower label survives
+    assert 2 in pal.active()
+
+
+def test_group_centroid_is_share_weighted():
+    # after X(49%)+Y(1%) merge, the weighted centroid stays near X (L≈10.4): Z is closer to Q (37) than
+    # to the group (≈41.6), so Z+Q merge; an unweighted centroid (L=20, 32 away) would take Z instead
+    tones = [((10, 0, 0), 49), ((30, 0, 0), 1), ((52, 0, 0), 25), ((89, 0, 0), 25)]
+    pal = segment.analyze(stripes(tones), Params(n_colors=4, filaments=2)).palette
+    assert pal.merges == {1: 0, 3: 2}
+
+
+def test_merged_base_moves_to_survivor():
+    # disc L40 with a thin L44 outline (the suggested base) and a light L80 square
+    gray = [segment._to_rgb(np.array([[L * 255 / 100, 128, 128]], np.float32))[0] for L in (40, 44, 80)]
+    img = np.zeros((300, 300, 4), np.uint8)
+    yy, xx = np.mgrid[:300, :300]
+    r2 = (yy - 150) ** 2 + (xx - 150) ** 2
+    img[r2 < 140 ** 2] = (*gray[1], 255)
+    img[r2 < 134 ** 2] = (*gray[0], 255)
+    img[100:200, 100:200] = (*gray[2], 255)
+    an = segment.analyze(img, Params(n_colors=3, filaments=2))
+    assert an.base == 1
+    assert an.palette.merges == {1: 0}
+    assert an.palette.base_index == 0 and 0 in an.palette.active()
+
+
+def test_auto_merge_is_deterministic():
+    p = Params(n_colors=6, filaments=3)
+    a, b = segment.analyze(sage_green(), p), segment.analyze(sage_green(), p)
+    assert a.palette.merges == b.palette.merges and a.palette.base_index == b.palette.base_index
+    assert _acyclic(a.palette)
+
+
+def test_distance_is_cielab_not_opencv_scaled():
+    # A–B differ by ΔL 10 (ΔE 10); A–C by Δa 20 (ΔE 20). OpenCV's 8-bit L (×2.55) would make A–B 25.5
+    tones = [((50, 0, 0), 40), ((50, 20, 0), 30), ((60, 0, 0), 30)]
+    an = segment.analyze(stripes(tones), Params(n_colors=3, filaments=2))
+    a, c, b = (_row_of(an, segment._to_rgb(np.array([[L * 2.55, x + 128, y + 128]], np.float32))[0])
+               for (L, x, y), _ in tones)
+    assert an.palette.merges == {b: a}
+
+
+def test_edited_row_absorbs_instead_of_being_merged():
+    an = segment.analyze(stripes([((50, 0, 0), 5), ((55, 0, 0), 40), ((90, 0, 0), 55)]), Params(n_colors=3))
+    an.palette.edited = {0}                     # X 5% edited, closest to the unedited Y 40%
+    assert segment.auto_merge(an, an.palette, 2) == 2
+    assert an.palette.merges == {1: 0} and 0 in an.palette.active()
+
+
+def test_pair_of_edited_rows_is_skipped():
+    an = segment.analyze(stripes([((50, 0, 0), 20), ((54, 0, 0), 20), ((70, 0, 0), 60)]), Params(n_colors=3))
+    an.palette.edited = {0, 1}                  # A–B (ΔE 4) is the closest pair but both are edited
+    assert segment.auto_merge(an, an.palette, 2) == 2
+    assert an.palette.merges == {2: 1}          # next closest: B–C; B survives because it is edited
+
+
+def test_runs_out_of_allowed_pairs_with_more_edited_rows_than_filaments():
+    an = segment.analyze(stripes(EIGHT), Params(n_colors=8))
+    edited = {0, 2, 4, 6, 7}
+    an.palette.edited = set(edited)
+    assert segment.auto_merge(an, an.palette, 4) == 5
+    assert set(an.palette.active()) == edited
+    assert _acyclic(an.palette)
+
+
+def test_rerun_starts_from_suggested_base():
+    an = segment.analyze(stripes(EIGHT), Params(n_colors=8, filaments=1))
+    assert segment.auto_merge(an, an.palette, 0) == 8
+    assert an.palette.merges == {} and an.palette.base_index == an.base
+
+
+def _cli_fil(monkeypatch, tmp_path, capsys, *extra):
+    from PIL import Image
+
+    from img2bambu import __main__ as cli
+    img = tmp_path / "sg.png"
+    Image.fromarray(sage_green()).save(img)
+    seen, real = [], segment.analyze
+    monkeypatch.setattr(cli.segment, "analyze", lambda path, p: (seen.append(p.filaments), real(path, p))[1])
+    assert cli.main([str(img), "--stl-only", "--colors", "4", "--out", str(tmp_path / "out"), *extra]) == 0
+    out = capsys.readouterr().out.splitlines()
+    return seen, out, [line for line in out if line.startswith("STL:")]
+
+
+def test_cli_filaments_flag_merges_and_prints(monkeypatch, tmp_path, capsys):
+    seen, out, stls = _cli_fil(monkeypatch, tmp_path, capsys, "--filaments", "3")
+    assert seen == [3]
+    i = next(k for k, line in enumerate(out) if line.startswith("Paleta:"))
+    assert out[i + 1] == "Mesclagem automática: 4 cores → 3 filamentos."
+    an = segment.analyze(sage_green(), Params(n_colors=4))
+    from img2bambu.params import hex_color
+    assert out[i + 2] == f"Mesclada: {hex_color(_color(an, PATCH))} → {hex_color(_color(an, GREEN))}"
+    assert not out[i + 3].startswith("Mesclada:")
+    assert len(stls) == 3                       # base + sage + green; the patch went into green
+
+
+def _color(an, rgb):
+    return an.palette.colors[_row_of(an, rgb)]
+
+
+def test_cli_filaments_defaults_to_zero(monkeypatch, tmp_path, capsys):
+    seen, out, stls = _cli_fil(monkeypatch, tmp_path, capsys)
+    assert seen == [0] and len(stls) == 4
+    assert not any(line.startswith(("Mesclagem", "Mesclada")) for line in out)
+
+
+def test_cli_filaments_8_accepted(monkeypatch, tmp_path, capsys):
+    assert _cli_fil(monkeypatch, tmp_path, capsys, "--filaments", "8")[0] == [8]
+
+
+@pytest.mark.parametrize("bad", ["9", "-1", "2.5", "x"])
+def test_cli_filaments_out_of_range_exits_2(monkeypatch, capsys, bad):
+    from img2bambu import __main__ as cli
+    called = []
+    monkeypatch.setattr(cli.segment, "load_image", lambda *a: called.append(a))
+    monkeypatch.setattr(cli.segment, "analyze", lambda *a: called.append(a))
+    with pytest.raises(SystemExit) as e:
+        cli.main(["missing.png", "--filaments", bad])
+    assert e.value.code == 2 and called == []
+    assert "--filaments" in capsys.readouterr().err
+
+
+def test_distance_ignores_area():
+    # C 40% and C' 40% are ΔE 6 apart; D 2% is ΔE 15 from C'. Plain distance merges C+C'; an
+    # area-weighted (Ward) cost, 6·√20 ≈ 27 vs 15·√(80/42) ≈ 21, would fold the small D in first
+    tones = [((20, 0, 0), 40), ((26, 0, 0), 40), ((41, 0, 0), 2), ((85, 0, 0), 18)]
+    pal = segment.analyze(stripes(tones), Params(n_colors=4, filaments=3)).palette
+    assert pal.merges == {1: 0}
+
+
+def _cv_lab(L):
+    return [L * 255 / 100, 128, 128]
+
+
+def test_unedited_rows_are_compared_by_kmeans_centers():
+    an = segment.analyze(stripes([((30, 0, 0), 30), ((50, 0, 0), 30), ((70, 0, 0), 40)]), Params(n_colors=3))
+    an.centers = np.array([_cv_lab(30), _cv_lab(60), _cv_lab(65)], np.float32)   # samples still say 30/50/70
+    segment.auto_merge(an, an.palette, 2)
+    assert an.palette.merges == {1: 2}          # centers decide (B–C 5), not samples (A–B = B–C = 20)
+
+
+def test_edited_sample_switches_to_samples():
+    an = segment.analyze(stripes([((30, 0, 0), 30), ((50, 0, 0), 30), ((70, 0, 0), 40)]), Params(n_colors=3))
+    an.centers = np.array([_cv_lab(30), _cv_lab(60), _cv_lab(65)], np.float32)
+    an.palette.samples[0] = segment._to_rgb(np.array([_cv_lab(45)], np.float32))[0]
+    segment.auto_merge(an, an.palette, 2)
+    assert an.palette.merges == {1: 0}          # samples decide (A 45 – B 50, equal shares); centers: B–C
+
+
+def test_equal_distances_merge_the_lower_pair():
+    an = segment.analyze(stripes([((30, 0, 0), 30), ((50, 0, 0), 30), ((70, 0, 0), 40)]), Params(n_colors=3))
+    an.centers = np.array([_cv_lab(30), _cv_lab(50), _cv_lab(70)], np.float32)    # A–B == B–C exactly
+    segment.auto_merge(an, an.palette, 2)
+    assert an.palette.merges == {1: 0}          # pair (0, 1) before (1, 2); equal shares -> lower survives
+
+
+def test_cli_one_filament_prints_singular(monkeypatch, tmp_path, capsys):
+    _, out, stls = _cli_fil(monkeypatch, tmp_path, capsys, "--filaments", "1")
+    assert "Mesclagem automática: 4 cores → 1 filamento." in out
+    assert sum(line.startswith("Mesclada:") for line in out) == 3 and len(stls) == 1

@@ -15,6 +15,7 @@ class Params:
     upsample: int = 2
     simplify_mm: float = 0.04
     smooth: int = 0                    # mean-shift level before clustering; 0 disables it
+    filaments: int = 0                 # merge closest colors until this many remain; 0 disables it
 
 
 @dataclass
