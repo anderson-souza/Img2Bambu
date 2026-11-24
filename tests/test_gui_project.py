@@ -235,6 +235,15 @@ def test_save_after_failed_detection(qapp, make_win, dialogs, tmp_path):
     assert not list(tmp_path.rglob("*.i2b"))
 
 
+def test_save_after_failed_detection_of_a_second_image(qapp, ready, dialogs, tmp_path):
+    bad = tmp_path / "vazia.png"
+    Image.fromarray(synthetic() * 0).save(bad)
+    open_img(qapp, ready, dialogs, bad)
+    assert ready.analysis is not None and not ready.save_project()
+    assert dialogs.shown == [("warning", "As cores desta imagem não foram detectadas.")]
+    assert not list(tmp_path.rglob("*.i2b"))
+
+
 def test_save_reports_file_name(qapp, ready, dialogs, tmp_path):
     save(ready, dialogs, tmp_path / "x.i2b")
     assert msg(ready) == "Projeto salvo: x.i2b."
@@ -429,6 +438,21 @@ def test_open_discards_running_tasks(qapp, make_win, dialogs, custom, img):
     assert w.palette is palette and w.analysis is analysis and len(w.rows) == 4
     assert w.view_prev.item.pixmap().toImage() == shown
     assert w.view3d.part_count() == parts > 0 and "erro antigo" not in w.log.toPlainText()
+
+
+def test_open_discards_late_3d_with_2d_tab_shown(qapp, make_win, dialogs, custom, img):
+    w = make_win()
+    open_img(qapp, w, dialogs, img)
+    w.tabs.setCurrentWidget(w.view3d)
+    settle(qapp, w)
+    late, parts = w.req3d, w.view3d.part_count()
+    assert parts > 0
+    w.tabs.setCurrentWidget(w.view_prev)
+    open_proj(qapp, w, dialogs, custom[1])
+    w.model_done(late, [])
+    w.model_failed(late, "erro antigo")
+    assert w.view3d.part_count() == parts and w.reframe3d and w.dirty3d
+    assert "erro antigo" not in w.log.toPlainText()
 
 
 def test_open_shows_project_image(qapp, make_win, dialogs, custom, tmp_path):
@@ -745,6 +769,17 @@ def test_undo_clears_mark(qapp, dialogs, custom):
         key(qapp, w, Qt.Key_Z)
         settle(qapp, w)
         assert w.windowTitle() == PLAIN
+
+
+def test_control_back_to_saved_value_clears_mark(qapp, ready, dialogs, tmp_path):
+    w = ready
+    save(w, dialogs, tmp_path / "x.i2b")
+    w.sp_n.setValue(4)
+    settle(qapp, w)
+    assert w.windowTitle() == MARKED
+    w.sp_n.setValue(3)
+    settle(qapp, w)
+    assert w.windowTitle() == PLAIN
 
 
 def test_no_project_never_asks(qapp, ready, dialogs, img):

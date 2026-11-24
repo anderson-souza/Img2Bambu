@@ -39,6 +39,7 @@ The user cannot return to a piece to iterate on it, nor hand the work to someone
 | Saving during color detection | refused with a message | palette and values on screen do not match until it ends | y |
 | Image bytes | original file as loaded, metadata included | no quality loss; a photo's EXIF travels with it | y |
 | `upsample` and `simplify_mm` | not saved | no control in the window changes them | y |
+| Output name with a folder in it | opens as its last component, with a log line | a received file must not choose a folder; listed as point 1 of the design the user approved ("aprovado, podemos seguir para as tarefas", 2026-11-23) | y |
 
 **Open questions:** none - all resolved or logged above.
 

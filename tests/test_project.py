@@ -121,6 +121,35 @@ def test_masks_equal_after_round_trip(tmp_path):
         same_masks(p, reload(tmp_path, p))
 
 
+def test_mostly_white_image_round_trips(tmp_path):
+    drifted = 0
+    for size, n in ((300, 3), (600, 2), (600, 3), (1000, 3)):
+        rgba = np.full((size, size, 4), 255, np.uint8)
+        rgba[: size // 5, :, 1:3] = 0
+        rgba[0, 0, 3] = 0                         # keeps the silhouette mode on alpha
+        an = segment.analyze(rgba, Params(n_colors=n))
+        drifted += float(an.centers.max()) > 255
+        p = project.Project("b.png", png(rgba), Params(n_colors=n), an.palette, an)
+        q = reload(tmp_path, p)
+        assert np.array_equal(q.analysis.centers, an.centers) and q.palette == p.palette
+    assert drifted
+
+
+def test_object_far_from_the_corner_round_trips(tmp_path):
+    rgba = np.zeros((400, 6000, 4), np.uint8)
+    rgba[:, 5600:] = synthetic()
+    p = make(rgba=rgba)
+    assert p.analysis.offset[1] > 5600
+    q = reload(tmp_path, p)
+    assert q.analysis.offset == p.analysis.offset and np.array_equal(q.analysis.rgba, p.analysis.rgba)
+
+
+def test_longest_file_name_is_saved(tmp_path):
+    path = tmp_path / ("a" * 251 + ".i2b")
+    project.save(str(path), make())
+    assert os.listdir(tmp_path) == [path.name]
+
+
 def test_later_sample_edit_gives_same_masks(tmp_path):
     for smooth in (0, 5):
         p = make(smooth, noisy())
@@ -179,6 +208,12 @@ INVALID = [
     (("palette", "outline"), [-1]), (("palette", "edited"), ["1"]), (("palette", "edited"), 1),
     (("detection", "base"), 4), (("detection", "centers"), [[0, 0, 0]]),
     (("detection", "centers", 0), [0, 0, float("nan")]), (("detection", "samples"), []),
+    (("detection", "centers", 0), [0, 0, 301]), (("detection", "centers", 0), [-11, 0, 0]),
+    (("detection", "centers", 0), [0, 0]), (("detection", "samples", 0), [0, 0, 256]),
+    (("detection", "samples", 0), [0, -1, 0]), (("detection", "samples", 0), [0, 0]),
+    (("palette", "edited"), [4]), (("palette", "edited"), [-1]), (("palette", "outline"), [4]),
+    (("palette", "streak"), [-1]), (("palette", "samples", 0), [0, 0, 256]),
+    (("image_name",), "a\ud800b"), (("name",), "\ud800"), (("presets", "process"), "\ud800"),
     (("detection", "offset"), [0]), (("detection", "offset"), [-1, 0]),
 ]
 
@@ -190,6 +225,15 @@ def test_invalid_values_are_refused(saved):
         with pytest.raises(project.ProjectError, match="valor inválido no projeto"):
             project.load(path, LIMITS)
             pytest.fail(f"accepted {keys} = {value!r}")
+    for part in ("palette", "detection"):
+        for v in (0, 255):
+            path = saved()
+            edit_json(path, (part, "samples", 0), [v, v, v])
+            q = project.load(path, LIMITS)
+            assert (q.palette if part == "palette" else q.analysis).samples[0] == (v, v, v)
+    path = saved()
+    edit_json(path, ("palette", "colors", 0), [255, 255, 255])
+    assert project.load(path, LIMITS).palette.colors[0] == (255, 255, 255)
     for key, bounds in LIMITS.items():
         for bound, step in zip(bounds, (-1, 1), strict=True):
             path = saved()

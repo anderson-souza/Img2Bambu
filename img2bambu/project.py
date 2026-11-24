@@ -101,7 +101,7 @@ def save(path, p: Project):
     data = _pack(p)
     path = os.path.realpath(path)
     # why: the old file is replaced only after the new one is whole; tempfile would make it readable by the owner only
-    tmp = f"{path}.{secrets.token_hex(4)}.tmp"
+    tmp = os.path.join(os.path.dirname(path), f".{secrets.token_hex(4)}.tmp")
     try:
         with open(tmp, "xb") as f:
             f.write(data)
@@ -131,6 +131,11 @@ def _typed(value, kind, what):
     ok = type(value) in (int, float) if kind is float else type(value) is kind
     if not ok:
         raise _bad(what)
+    if kind is str:
+        try:
+            value.encode()                  # why: a lone surrogate would open and then make saving fail
+        except UnicodeEncodeError as e:
+            raise _bad(what) from e
     return value
 
 
@@ -248,7 +253,8 @@ def _build(d, image, labels_png, lab_png, limits):
     presets = {k: _setting(raw, k, "", notes) for k in PRESET_KEYS}
     check = _setting(d, "check", True, notes)
     name = _file_name(_setting(d, "name", os.path.splitext(image_name)[0], notes), notes)
-    centers = [[_number(v, float, 0, 255, "centers") for v in _list(c, "centers", 3)]
+    # why: k-means adds up in float32, so a center of a large white area drifts past 255; kept exact, never clipped
+    centers = [[_number(v, float, -10, 300, "centers") for v in _list(c, "centers", 3)]
                for c in _list(det["centers"], "centers", n)]
     samples = tuple(_rgbs(det["samples"], n, "samples"))
     offset = tuple(_number(v, int, 0, 1 << 30, "offset") for v in _list(det["offset"], "offset", 2))
