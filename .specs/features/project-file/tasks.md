@@ -76,9 +76,9 @@ T7 → T8
 
 **Done when**:
 
-- [ ] `Project`, `settings` and `save` write the members of design.md
-- [ ] C38 passes
-- [ ] Quick gate passes; no existing test deleted or weakened
+- [x] `Project`, `settings` and `save` write the members of design.md
+- [x] C38 passes
+- [x] Quick gate passes; no existing test deleted or weakened
 
 **Tests**: unit
 **Gate**: quick
