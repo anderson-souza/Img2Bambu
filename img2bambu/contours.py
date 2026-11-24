@@ -13,13 +13,18 @@ CORNER_DEG = 45
 # why: directions measured on a pixel staircase are off by a few degrees, so an exact 45° corner may read less
 CORNER_SLACK_DEG = 5
 CORNER_LEG_MM = 1.0
-# why: the final scaling moves the outline a little more, and the total has to stay within 1 px
-MAX_SHIFT_PX = 0.75
-MAX_CORNER_SHIFT_PX = 0.8
-MAX_VERTEX_SHIFT_PX = 0.95          # pixel corners stick out of the line through the edge midpoints
-# (low-pass sigma in pixel edges, simplification in px), smoothest first (None = one straight line);
-# the first within MAX_SHIFT_PX is used
-LEVELS = ((0, None), (8, 0.35), (8, 0.2), (6, 0.2), (4, 0.2), (3, 0.2), (2, 0.2), (1, 0.2))
+STRAIGHT_PX = 1.1                   # a piece this close to a chord is an edge, not a curve
+CORNER_SHIFT_PX = 1.0
+# why: one pixel of the original image; the final scaling moves the outline a little more, up to 2 px in all
+MAX_SHIFT_PX = 1.6
+SHIFT_PX = 1.4
+# why: both sides of a thin line may move towards each other, so they get less room
+THIN_SHIFT_PX = 0.25
+THIN_MM = 0.6
+SIGMA, REACH, ROUNDS = 8, 20, 16
+NEAR = 8
+FLAT_PX = 0.5                       # ripples lower than this are flattened
+THIN_FLAT_PX = 0.15
 ARC_STEP_DEG = 6
 
 
@@ -131,7 +136,7 @@ def _corners(verts, mid, closed, px_mm):
     # why: a staircase has no direction of its own over a few pixels
     long = max(CORNER_LEG_MM / px_mm, 10)
     path = np.abs(np.diff(mid, axis=0)).sum(1) if n > 1 else np.zeros(0)
-    if n < 4 or path.sum() < 2 * long:
+    if n < 4 or path.sum() < 2 * min(long, 4):
         return []
 
     def legs(size):
@@ -153,16 +158,21 @@ def _corners(verts, mid, closed, px_mm):
 
     idx, ((b0, b1, bd), (f0, f1, fd)) = legs(long)
     wide = _turn(mid[b0] - mid[b1], mid[f1] - mid[f0]) * (bd & fd)
-    _, ((s0, s1, _), (t0, t1, _)) = legs(long / 2)
-    near = _turn(mid[s0] - mid[s1], mid[t1] - mid[t0])
-    # why: on an arc the turn halves with the leg; at a corner it stays
-    score = np.where((wide >= CORNER_DEG - CORNER_SLACK_DEG) & (near >= 0.62 * wide), wide + near, 0)
+
+    def turn(size):
+        _, ((s0, s1, _), (t0, t1, _)) = legs(size)
+        return _turn(mid[s0] - mid[s1], mid[t1] - mid[t0])
+    # why: on an arc the turn grows with the leg; at a corner it stays
+    near, far = turn(long / 2), turn(long * 1.5)
+    sharp = (near >= 0.8 * wide) | (near >= 0.62 * wide) & (far <= 1.2 * wide)
+    score = np.where((wide >= CORNER_DEG - CORNER_SLACK_DEG) & sharp, wide + near, 0)
+    score = np.maximum(score, 360 * _square(verts, idx, closed, max(CORNER_LEG_MM / px_mm, 4)))
     picked, order = [], np.argsort(-score, kind="stable")
     for k in order:
         if score[k] <= 0:
             break
         gap = [min(abs(k - q), len(idx) - abs(k - q)) if closed else abs(k - q) for q in picked]
-        if all(g >= long for g in gap):
+        if all(g >= (4 if score[k] >= 360 else long) for g in gap):
             picked.append(k)
     out = []
     for k in sorted(picked):
@@ -174,10 +184,28 @@ def _corners(verts, mid, closed, px_mm):
             near = np.arange(i - 6, i + 7)
             near = near % n if closed else near[(near > 0) & (near < n)]
             off = np.hypot(*(verts[near] - p).T)
-            i, p = int(near[off.argmin()]), p if off.min() <= MAX_CORNER_SHIFT_PX else None
+            i, p = int(near[off.argmin()]), p if off.min() <= CORNER_SHIFT_PX else None
         out.append((i, verts[i] if p is None else p))
     # why: two corners may land on one vertex
     return sorted({i: (i, p) for i, p in out}.values(), key=lambda c: c[0])
+
+
+def _square(verts, idx, closed, leg):
+    """Whether each vertex is a right angle between two straight pixel runs of at least `leg`."""
+    step = np.diff(verts, axis=0)
+    n = len(step)
+    bend = np.any(step != np.roll(step, 1, 0), axis=1)
+    if not closed:
+        bend[0] = True
+    at = np.flatnonzero(bend)
+    out = np.zeros(len(idx), bool)
+    if len(at) < 2:
+        return out
+    after = np.diff(np.append(at, at[0] + n if closed else n))
+    before = np.roll(after, 1)
+    good = at[(after >= leg) & (before >= leg) & (closed | (at > 0))]
+    out[np.isin(idx % n, good)] = True
+    return out
 
 
 def _apex(mid, b0, b1, f0, f1):
@@ -222,82 +250,164 @@ def _rounded(pts, closed):
     return out
 
 
-def _close(raw, line):
-    """Both lines within MAX_SHIFT_PX of each other."""
-    if len(line) < 2:
-        return False
-    a, b = LineString(raw), LineString(line)
-    shapely.prepare([a, b])
-    # why: the smooth line has long segments, so its vertices alone would not bound the distance
-    dense = shapely.get_coordinates(shapely.segmentize(b, 1.0))
-    return (shapely.dwithin(b, shapely.points((raw[:-1] + raw[1:]) / 2), MAX_SHIFT_PX).all()
-            and shapely.dwithin(b, shapely.points(raw), MAX_VERTEX_SHIFT_PX).all()
-            and shapely.dwithin(a, shapely.points(dense), MAX_SHIFT_PX).all())
+class Piece:
+    """Pixel edges `verts` of a line between two fixed points, or all around if `loop`."""
 
+    def __init__(self, verts, start, end, marks, loop, room):
+        mid = (verts[:-1] + verts[1:]) / 2
+        self.verts, self.marks, self.loop, self.room = verts, marks, loop, room
+        self.src = np.vstack([start, mid, end])
+        self.at = np.concatenate([[0], np.arange(len(mid)) + 0.5, [len(mid)]])
+        self.raw = np.vstack([start, verts[1:-1], end])
+        self.lines, self.tight = None, SHIFT_PX / 2
 
-def _smooth_piece(verts, start, end, marks, loop):
-    """Rounded vertices (one array each) of the smoothed `verts`, from start to end or all around, and their indices."""
-    mid = (verts[:-1] + verts[1:]) / 2
-    src = np.vstack([start, mid, end])
-    at = np.concatenate([[0], np.arange(len(mid)) + 0.5, [len(mid)]])
-    for sigma, tol in LEVELS:
-        pts = _low_pass(src, sigma, loop)
-        idx = np.array([0, len(pts) - 1]) if tol is None else _dp(pts, tol)
-        # why: ring of a closed stretch pinned to one junction must not collapse to a line
-        if (loop or np.array_equal(start, end)) and len(idx) < 4:
-            continue
-        got = _with_marks(pts[idx], at[idx], marks)
-        if loop:
-            parts = _rounded(got[0][:-1], True)
+    def build(self, pts, limit):
+        """Sets `lines`, one polyline per stretch, from smoothed points; returns the indices that strayed."""
+        idx = _dp(pts, THIN_FLAT_PX if (self.room <= THIN_SHIFT_PX).any() else FLAT_PX)
+        if (self.loop or np.array_equal(pts[0], pts[-1])) and len(idx) < 4:
+            return np.arange(len(self.raw))
+        pts, at = _with_marks(pts[idx], self.at[idx], self.marks)
+        if self.loop:
+            parts = _rounded(pts[:-1], True)
             k = len(parts[0]) // 2
             parts.append(parts[0][:k + 1])
             parts[0] = parts[0][k:]
         else:
-            parts = _rounded(got[0], False)
+            parts = _rounded(pts, False)
         line = np.vstack(parts)
-        if _close(np.vstack([start, verts[1:-1], end]) if len(verts) > 2 else src, line):
-            return parts, got[1]
-    return None, None
+        off = _strays(self.raw, line, limit)
+        if not len(off):
+            self.lines = _cut(parts, at, self.marks)
+        return off
+
+    def pixels(self):
+        lims = [0, *self.marks, len(self.raw) - 1]
+        self.lines = [self.raw[a:b + 1] for a, b in zip(lims[:-1], lims[1:], strict=True)]
 
 
-def _low_pass(pts, sigma, loop):
-    """Gaussian low-pass with the shrinkage added back; the end points stay, except on a loop."""
-    if not sigma or len(pts) < 3:
-        return pts
-    r = min(4 * sigma, len(pts) - 2)
-    k = np.exp(-0.5 * (np.arange(-r, r + 1) / sigma) ** 2)
-    k /= k.sum()
+def _strays(raw, line, limit):
+    """Indices of `raw` near places where both lines are more than `limit` apart."""
+    a, b = LineString(raw), LineString(line)
+    if not b.length:
+        return np.arange(len(raw))
+    shapely.prepare([a, b])
+    off = np.flatnonzero(~shapely.dwithin(b, shapely.points(raw), limit))
+    # why: the smooth line has long segments, so its vertices alone would not bound the distance
+    dense = shapely.get_coordinates(shapely.segmentize(shapely.remove_repeated_points(b), 1.0))
+    far = dense[~shapely.dwithin(a, shapely.points(dense), limit)]
+    return np.union1d(off, [int(np.hypot(*(raw - p).T).argmin()) for p in far]).astype(int)
 
-    def blur(p):
-        # why: mirroring through the end point keeps it fixed and the line straight there
-        if loop:
-            q = np.vstack([p[-r - 1:-1], p, p[1:r + 1]])
+
+def _low_pass(pieces):
+    """Smooth points of every piece: repeated low-pass, each point held within `room` across the line."""
+    size = np.array([len(p.src) for p in pieces])
+    begin = np.concatenate([[0], np.cumsum(size)[:-1]])
+    src = np.vstack([p.src for p in pieces])
+    room = np.concatenate([np.concatenate([[p.room[0]], p.room, [p.room[-1]]]) for p in pieces])
+    thin = room == THIN_SHIFT_PX
+    pad_idx, mirror, inner = [], [], []
+    total = 0
+    for b, m, p in zip(begin, size, pieces, strict=True):
+        k = np.arange(-REACH, m + REACH)
+        if p.loop:
+            pad_idx.append(b + k % (m - 1))
+            mirror.append(np.full(len(k), -1))
         else:
-            q = np.vstack([2 * p[0] - p[r:0:-1], p, 2 * p[-1] - p[-2:-r - 2:-1]])
-        return np.column_stack([np.convolve(q[:, c], k, "valid") for c in (0, 1)])
-    once = blur(pts)
-    return once + blur(pts - once)
+            # why: mirroring through the end point keeps it fixed and the line straight there
+            lo, hi = k < 0, k >= m
+            idx = np.where(lo, np.minimum(-k, m - 1), np.where(hi, np.maximum(2 * (m - 1) - k, 0), k))
+            pad_idx.append(b + idx)
+            mirror.append(np.where(lo, b, np.where(hi, b + m - 1, -1)))
+        inner.append(total + REACH + np.arange(m))
+        total += len(k)
+    pad_idx, mirror, inner = map(np.concatenate, (pad_idx, mirror, inner))
+    flip = mirror >= 0
+    fixed = np.concatenate([[b, b + m - 1] for b, m, p in zip(begin, size, pieces, strict=True) if not p.loop]
+                           or [[]]).astype(int)
+
+    def padded(p):
+        q = p[pad_idx]
+        q[flip] = 2 * p[mirror[flip]] - q[flip]
+        return q
+
+    def blur(p, sigma):
+        k = np.exp(-0.5 * (np.arange(-REACH, REACH + 1) / sigma) ** 2)
+        k /= k.sum()
+        q = padded(p)
+        return np.column_stack([np.convolve(q[:, c], k, "same") for c in (0, 1)])[inner]
+    pts = src
+    for it in range(ROUNDS):
+        sigma = SIGMA if it < ROUNDS * 3 // 4 else SIGMA / 2
+        once = blur(pts, sigma)
+        # why: adding the lost part back keeps curves from shrinking
+        pts = once + blur(pts - once, sigma)
+        q = padded(pts)
+        along = q[inner + 3] - q[inner - 3]
+        along /= np.hypot(*along.T)[:, None] + 1e-9
+        across = np.column_stack([-along[:, 1], along[:, 0]])
+        off = ((pts - src) * across).sum(1)
+        pts = pts - across * (off - np.clip(off, -room, room))[:, None]
+        # why: where a first try strayed, sliding along the line has to be held as well (a step at a flat end)
+        gap = pts - src
+        reach = np.hypot(*gap.T)
+        held = src + gap * (np.minimum(reach, np.maximum(room, 0.2)) / np.maximum(reach, 1e-9))[:, None]
+        pts = np.where((room < SHIFT_PX)[:, None] & ~thin[:, None], held, pts)
+        pts[fixed] = src[fixed]
+    pts = np.where(((room == SHIFT_PX) | thin)[:, None], blur(pts, 2), blur(pts, 1))
+    pts[fixed] = src[fixed]
+    out = [pts[b:b + m].copy() for b, m in zip(begin, size, strict=True)]
+    for p, v in zip(pieces, out, strict=True):
+        if p.loop:
+            v[-1] = v[0]
+    return out
+
+
+def _smooth(pieces):
+    """Sets `lines` of every piece."""
+    todo = []
+    for p in pieces:
+        ends = p.src[[0, -1]]
+        limit = THIN_SHIFT_PX if (p.room == THIN_SHIFT_PX).any() else STRAIGHT_PX
+        if p.loop or not np.diff(ends, axis=0).any() or len(_strays(p.raw, ends, limit)):
+            todo.append(p)
+        else:
+            p.lines = _chord(p)
+    for _ in range(5):
+        if not todo:
+            return
+        left = []
+        for p, pts in zip(todo, _low_pass(todo), strict=True):
+            off = p.build(pts, MAX_SHIFT_PX)
+            if len(off):
+                # why: only the surroundings of the spot that strayed lose smoothness, not the whole piece
+                for i in off:
+                    near = np.arange(i - NEAR, i + NEAR)
+                    near = near % len(p.room) if p.loop else near[(near >= 0) & (near < len(p.room))]
+                    p.room[near] = np.minimum(p.room[near], p.tight)
+                p.tight /= 2
+                left.append(p)
+        todo = left
+    for p in todo:
+        if len(p.build(p.src, MAX_SHIFT_PX)):
+            p.pixels()
+
+
+def _chord(p):
+    pts, _ = _with_marks(p.src[[0, -1]], p.at[[0, -1]], p.marks)
+    return [pts[k:k + 2] for k in range(len(pts) - 1)]
 
 
 def _dp(src, tol):
     """Indices kept by Douglas-Peucker."""
-    n = len(src)
-    keep = np.zeros(n, bool)
-    keep[[0, -1]] = True
-    stack = [(0, n - 1)]
-    while stack:
-        a, b = stack.pop()
-        if b - a < 2:
-            continue
-        v, w = src[b] - src[a], src[a + 1:b] - src[a]
-        size = v @ v
-        t = np.clip(w @ v / size, 0, 1) if size else np.zeros(len(w))
-        d = np.hypot(*(w - t[:, None] * v).T)
-        k = int(d.argmax())
-        if d[k] > tol:
-            keep[a + 1 + k] = True
-            stack += [(a, a + 1 + k), (a + 1 + k, b)]
-    return np.flatnonzero(keep)
+    line = shapely.get_coordinates(LineString(src).simplify(tol, preserve_topology=False))
+    if len(line) == len(src):
+        return np.arange(len(src))
+    idx, k = [0], 1
+    for p in line[1:-1]:
+        hit = np.flatnonzero((src[k:-1] == p).all(1))
+        k += int(hit[0]) + 1
+        idx.append(k - 1)
+    return np.array(idx + [len(src) - 1])
 
 
 def _with_marks(pts, at, marks):
@@ -325,8 +435,8 @@ def _cut(parts, at, marks):
     return out
 
 
-def _smooth_line(seq, closed, stretches, px_mm):
-    """Sets `smooth` of every stretch of a long line."""
+def _cut_line(seq, closed, stretches, px_mm, thin):
+    """Pieces of a long line between corners; the returned function sets `smooth` of its stretches."""
     chunks = [stretches[i].verts[::-1] if rev else stretches[i].verts for i, rev in seq]
     verts = np.vstack([chunks[0]] + [c[1:] for c in chunks[1:]]).astype(float)
     bounds = np.cumsum([0] + [len(c) - 1 for c in chunks])
@@ -353,19 +463,24 @@ def _smooth_line(seq, closed, stretches, px_mm):
     else:
         corners = [(0, verts[0])] + [c for c in corners if 0 < c[0] < n] + [(n, verts[-1])]
     junctions = np.array([c for c in cut if 0 < c < n], int)
-    # result as one list of polylines per interval between consecutive junctions / corners
     pieces = []
     for (i, p), (j, q) in zip(corners[:-1], corners[1:], strict=True):
         marks = junctions[(junctions > i) & (junctions < j)] - i
-        parts, at = _smooth_piece(verts[i:j + 1], p, q, marks, loop)
-        if parts is None:
-            raw = np.vstack([p, verts[i + 1:j], q])
-            lims = [0, *marks, j - i]
-            lines = [raw[a:b + 1] for a, b in zip(lims[:-1], lims[1:], strict=True)]
-        else:
-            lines = _cut(parts, at, marks)
-        lims = [i, *(marks + i), j]
-        pieces += list(zip(lims[:-1], lims[1:], lines, strict=True))
+        mine = ((verts[i:j] + verts[i + 1:j + 1]) / 2).astype(int)
+        room = np.where(thin[mine[:, 1], mine[:, 0]], THIN_SHIFT_PX, SHIFT_PX)
+        pieces.append((i, j, Piece(verts[i:j + 1], p, q, marks, loop, room)))
+
+    def finish():
+        _assign(seq, closed, stretches, bounds, shift, n, chunks, pieces)
+    return [p for _, _, p in pieces], finish
+
+
+def _assign(seq, closed, stretches, bounds, shift, n, chunks, pieces):
+    done = []
+    for i, j, p in pieces:
+        lims = [i, *(p.marks + i), j]
+        done += list(zip(lims[:-1], lims[1:], p.lines, strict=True))
+    pieces = done
     for k, (s, rev) in enumerate(seq):
         a, b = (bounds[k] - shift) % n if closed else bounds[k], 0
         b = a + len(chunks[k]) - 1
@@ -413,14 +528,14 @@ def _place(stretches, pinned):
 
 
 def _strayed(stretches, lines):
-    """Junctions whose move left a pixel of the boundary more than MAX_VERTEX_SHIFT_PX away."""
+    """Junctions whose move left a pixel of the boundary more than MAX_SHIFT_PX away."""
     found = set()
     for s, line in zip(stretches, lines, strict=True):
         if s.ends and not s.raw:
             geo = LineString(line)
             shapely.prepare(geo)
             for e, head in zip(s.ends, (s.verts[:8], s.verts[-8:]), strict=True):
-                if not shapely.dwithin(geo, shapely.points(head[1:-1]), MAX_VERTEX_SHIFT_PX).all():
+                if not shapely.dwithin(geo, shapely.points(head[1:-1]), MAX_SHIFT_PX).all():
                     found.add(e)
     return found
 
@@ -531,6 +646,19 @@ def _overlaps(regions):
     return bad
 
 
+def _thin(lab, px_mm):
+    """Pixels near a part of any region narrower than THIN_MM."""
+    size = max(3, int(np.ceil(THIN_MM / px_mm)))
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size))
+    out = np.zeros(lab.shape, np.uint8)
+    for v in np.unique(lab[lab != OUTSIDE]):
+        m = (lab == v).astype(np.uint8)
+        # why: opening also clips a few pixels of every corner and bump, which are not thin parts
+        opened = cv2.dilate(cv2.morphologyEx(m, cv2.MORPH_OPEN, k), np.ones((9, 9), np.uint8))
+        out |= m & (1 - opened)
+    return cv2.dilate(out, np.ones((11, 11), np.uint8)) > 0
+
+
 def trace(sil_m, masks, px_mm):
     """(silhouette polygons, [polygons of each mask]) in pixels, Y down; neighbours share their boundary."""
     lab = np.where(sil_m > 0, 0, OUTSIDE).astype(np.int32)
@@ -541,8 +669,14 @@ def trace(sil_m, masks, px_mm):
     if not stretches:
         return [], [[] for _ in masks]
     leg = int(max(CORNER_LEG_MM / px_mm, 10))
+    thin, work, todo = _thin(lab, px_mm), [], []
     for seq, closed in _lines(stretches, _pairs(stretches, leg)):
-        _smooth_line(seq, closed, stretches, px_mm)
+        pieces, finish = _cut_line(seq, closed, stretches, px_mm, thin)
+        work.append(finish)
+        todo += pieces
+    _smooth(todo)
+    for finish in work:
+        finish()
     # why: the bare base is checked as well; a sliver of it could flip over without any line crossing
     tests = [lambda v: v >= 0] + [lambda v, k=k: v == k for k in range(len(masks) + 1)]
     pinned = _strayed(stretches, _place(stretches, ()))

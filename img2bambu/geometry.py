@@ -23,13 +23,13 @@ def to_polys(sil_m, masks, mpp_up):
     if not base:
         return [], [[] for _ in masks]
     h = sil_m.shape[0]
-    xs = np.flatnonzero(sil_m.any(0))
-    x0, _, x1, _ = unary_union(base).bounds
-    # why: smoothing may move the extreme points by a fraction of a pixel; the width asked for is kept
-    scale = (xs[-1] + 1 - xs[0]) / (x1 - x0)
+    lo, hi = (np.array([f(np.flatnonzero(sil_m.any(a))) for a in (0, 1)]) for f in (np.min, np.max))
+    b = np.array(unary_union(base).bounds)
+    # why: smoothing may move the extreme points by a fraction of a pixel; the size asked for is kept
+    scale = (hi + 1 - lo) / (b[2:] - b[:2])
 
     def to_mm(c):
-        return np.column_stack([(c[:, 0] - x0) * scale + xs[0], (h / 2 - c[:, 1]) * scale + h / 2]) * mpp_up
+        return ((c - b[:2]) * scale + lo - (0, h)) * (mpp_up, -mpp_up)
 
     def finish(polys, inset):
         # why: regions/holes linked by a pixel diagonal touch at a single point, which extrudes
@@ -51,6 +51,10 @@ def extrude(polys, z0, height):
             if q.area < 0.05:
                 continue
             mesh = trimesh.creation.extrude_polygon(q, height)
+            if not mesh.is_watertight:
+                # why: earcut may fail on holes that almost touch; half a micron apart is enough
+                parts = [g for g in shapely.get_parts(q.buffer(-5e-4, join_style="mitre")) if g.area > 0]
+                mesh = trimesh.util.concatenate([trimesh.creation.extrude_polygon(g, height) for g in parts])
             mesh.apply_translation([0, 0, z0])
             meshes.append(mesh)
     if not meshes:

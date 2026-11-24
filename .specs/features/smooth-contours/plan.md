@@ -1,9 +1,9 @@
 # Smooth contours without gaps
 
 **Approved**: 2026-11-23 - user: "aprovado"
-**Settled mid-build:** none
+**Settled mid-build:** after the review, user chose: "2 px, giro ≤ 2 (Recomendado)" (criterion 3: 2 px; criterion 2: ≤ 2 turns on real masks, ≤ 1.2 on ideal ones); "Remover a S2 (Recomendado)" (criteria 11-15 dropped); "Deixar como base (Recomendado)" (transparent slits; no effect without S2)
 **Review:** sent at b3d1d4d
-**Fix pass:** <written when the fix pass is made - done - <what it changed, or no changes needed>>
+**Fix pass:** done - P1, P2, P4: smoothing limited locally, tests on real masks; P3: exact right angles; P5: each axis scaled by itself; P6, P7: S2 removed (user); P8: one retry. Left: base outline of a disc touching the crop (2.7 and 3.2 turns at 1200 and 2400 px, ledge made by `clean`); up to 2.3 px on 21 of ~166,000 dino boundary points; criterion 7 on a slanted line is tested against the mask's mean width; criterion 9 test does not isolate `_conflicts`
 
 ## Problem
 
@@ -23,16 +23,16 @@ about 0.5 mm between colors: 458 mm² of 17,167 mm², 250 mm² of it not base-co
 
 Nothing has been printed or sliced for this measurement.
 
-When this ships, curved and slanted walls come out smooth, sharp corners stay sharp, neighbouring
-colors meet along one line, and strips the image does not paint in the base color are filled.
+When this ships, curved and slanted walls come out smooth, sharp corners stay sharp, and
+neighbouring colors meet along one line.
 
 ## Shape
 
 This reuses `build_masks`, `build_parts` and `extrude`; CLI, 3D and export already go through them.
-Every rule runs in `img2bambu/segment.py` (filling) or `img2bambu/contours.py` and `img2bambu/geometry.py` (contours), reached by
+Every rule runs in `img2bambu/contours.py` and `img2bambu/geometry.py` (contours), reached by
 `tests/test_core.py` and siblings.
 
-1. image, palette and params -> `segment.build_masks` (exists) - cleans and protects lines as today, then fills strips (S2); hands on disjoint masks
+1. image, palette and params -> `segment.build_masks` (exists) - cleans and protects lines as today; hands on disjoint masks
 2. `pipeline.render` (exists) - draws the 2D preview from those masks, pixel by pixel as today
 3. `geometry.build_parts` (exists) - hands the silhouette and all masks together to the tracer
 4. `contours.trace`, called by `geometry` (new) - splits pixel-edge boundaries at points where three or more regions meet, smooths each shared stretch once, keeps corners, rebuilds one polygon set per part
@@ -53,9 +53,8 @@ flowchart LR
 | Front | What changes |
 | --- | --- |
 | domain | a part's polygons depend on all masks, no longer on its own mask alone; contours run along pixel edges |
-| domain | `build_masks`: non-base strips between two colors now belong to one of them, amending thin-lines criterion 1 ("same masks as today") |
 | stored data | nothing - no persisted field or setting |
-| readers | 2D preview and `_preview.png` (filled strips only, criterion 11); 3D tab, STLs, 3MF (criterion 8) |
+| readers | 3D tab, STLs, 3MF (criterion 8); 2D preview unchanged |
 | domain | `Params.simplify_mm` and `geometry.to_polys` per mask are gone: `to_polys` takes all masks |
 | readers | `test_preview3d.py` width tolerance, which states the old lost pixel: tightened with criterion 4 |
 | readers | color percentages: unchanged, counted before cleaning |
@@ -91,9 +90,9 @@ The user exports as today; curves are smooth and colors touch.
    all along the shared boundary, with overlap area 0 (≤ 1e-6 mm²)
    - two half discs at 600, 1200 and 2400 px; strong case: curved S-shaped boundary, and three colors
      meeting at one point
-2. The outline of a disc SHALL turn ≤ 1.2 turns in total and ≤ 15° at any vertex
+2. The outline of a disc SHALL turn ≤ 1.2 turns in total (≤ 2 on masks from `build_masks`) and ≤ 15° at any vertex
    - 150 mm disc at 600, 1200 and 2400 px; strong case: 4 mm disc at 600 px over 150 mm
-3. The smoothed boundaries SHALL stay within 1 px of the mask's pixel-edge boundary, in both directions
+3. The smoothed boundaries SHALL stay within 2 px of the mask's pixel-edge boundary, in both directions
 4. The base's width SHALL equal the silhouette mask's width, counted in full pixels, ± 0.02 mm
    - disc at 600, 1200 and 2400 px → 150 ± 0.02; a filled rectangle → 150 ± 0.02
 5. WHEN the mask's boundary has a corner THEN the polygon SHALL have a vertex within 1 px of it
@@ -113,23 +112,7 @@ The user exports as today; curves are smooth and colors touch.
    - mask with boundaries 1 px apart → no part lost, no mesh error
 10. The same image and parameters SHALL give identical meshes on two runs
 
-### S2: Bare strips between colors are filled (P2)
-
-Strips left by cleaning take a neighbouring color where the image is not base-colored.
-
-**Acceptance Criteria**
-
-11. WHEN a bare, non-base-colored pixel is in a strip ≤ 0.5 mm wide (± 1 px) between two different raised colors THEN it SHALL go
-    to the nearer color. "Base-colored" = its image color, after merges, is the base. Ties go to the lower label; the 2D preview
-    shows the result
-    - 0.3 mm strip of a dropped third color → filled, half to each side; 0.45 mm → filled; 0.7 mm → bare
-12. IF a pixel is base-colored, or belongs to a protected base line THEN it SHALL stay bare
-    - 0.3 mm base line marked "Contorno" → a continuous gap ≥ 0.42 mm − 1 px; unmarked → only what cleaning covers today
-13. IF a pixel's color has "Filtro reflexo" on (radius > 0) THEN it SHALL stay bare
-    - 0.3 mm highlight streak between two colors → bare as today
-14. IF a bare strip lies within one color, or between a color and the silhouette edge THEN it SHALL stay as today
-15. The filling SHALL keep masks disjoint and inside the silhouette, take no pixel from any mask, and
-    leave images with no such strip pixel for pixel as today
+S2 (filling bare strips, criteria 11-15) was built in b3d1d4d and removed after the review: user chose "Remover a S2".
 
 ## Out of scope
 
@@ -137,7 +120,7 @@ Strips left by cleaning take a neighbouring color where the image is not base-co
 | --- | --- |
 | A control or CLI option to turn smoothing off | user chose always on |
 | Smooth contours in the 2D preview | user chose to keep pixels |
-| Strips inside one color or along the silhouette edge | the question covered strips between two colors |
+| Filling bare strips left by cleaning | removed by the user after the review |
 | Chamfer, inlay, different heights per color | other items of the list; user picked 1 and 2 |
 | Corners already rounded by mask cleaning | corners are preserved relative to the mask; cleaning is separate |
 | Confirmation on a printed piece | needs the user's printer |
@@ -147,14 +130,13 @@ Strips left by cleaning take a neighbouring color where the image is not base-co
 | Assumption | Chosen default | Rationale | Confirmed? |
 | --- | --- | --- | --- |
 | Control | always on | user chose it | y |
-| Strips | filled up to 0.5 mm, fixed; never base-colored nor "Filtro reflexo" pixels | user chose it | y |
+| Strips | not filled | user chose to remove S2 | y |
 | Corners | deviation ≥ 45° over 1 mm on each side | user chose it | y |
 | 2D preview | stays pixel-based | user chose it | y |
-| Strip with mixed colors | only its non-base pixels are filled; the base-colored part stays | follows the chosen rule | n |
-| Detail under 1 mm | an edge too short for the corner rule may be rounded, up to 1 px | criterion 3 bounds it | n |
+| Detail under 1 mm | an edge too short for the corner rule may be rounded, up to 2 px | criterion 3 bounds it | n |
 | Pixel art | its steps ≥ 1 mm on both sides stay, smaller ones smooth | follows the corner rule and "always on" | n |
 | Contact | the 1 µm inset per side may stay, a 0.002 mm gap | keeps diagonal links manifold; below the 0.005 bound | n |
-| Scale | outline and all colors scaled together to meet criterion 4 | smoothing may shift an extreme by a fraction of a px | n |
+| Scale | base and colors scaled together, each axis by its own factor, to meet criterion 4 | smoothing may shift an extreme by a fraction of a px | n |
 
 **Open questions:** none - all resolved or logged above.
 
