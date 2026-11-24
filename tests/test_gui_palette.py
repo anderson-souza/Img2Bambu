@@ -570,3 +570,62 @@ def test_one_filament_logs_singular(qapp, win):
     load_sg4(qapp, win, 1)
     assert len(win.palette.active()) == 1 and win.palette.active() == [win.palette.base_index]
     assert log_lines(win)[-1] == "Mesclagem automática: 4 cores → 1 filamento."
+
+
+def test_outline_checkbox_off_by_default_and_on_base_row(qapp, win):
+    load_sg(qapp, win)
+    assert not any(r.outline.isChecked() for r in win.rows)
+    assert win.rows[win.palette.base_index].outline.isEnabled()
+    i = next(i for i in range(len(win.rows)) if i != win.palette.base_index)
+    win.rows[i].merge.setCurrentIndex(1)
+    assert not win.rows[i].outline.isEnabled()
+    settle(qapp, win)
+
+
+def test_outline_and_streak_exclude_each_other_and_undo_together(qapp, win, monkeypatch):
+    load_sg(qapp, win)
+    r = win.rows[0]
+    r.streak.setChecked(True)
+    settle(qapp, win)
+    monkeypatch.setattr(win, "reanalyze", lambda *a: (_ for _ in ()).throw(AssertionError("detected again")))
+    shown = win.view_prev.item.pixmap().cacheKey()
+    r.outline.setChecked(True)
+    settle(qapp, win)
+    assert win.view_prev.item.pixmap().cacheKey() != shown
+    assert win.palette.outline == {0} and 0 not in win.palette.streak
+    assert not r.streak.isChecked() and 0 not in win.palette.edited
+    win.undo()
+    assert r.streak.isChecked() and not r.outline.isChecked()
+    assert win.statusBar().currentMessage() == "Desfeito: Contorno."
+    settle(qapp, win)
+    r.outline.setChecked(True)
+    r.streak.setChecked(True)
+    assert win.palette.outline == set() and not r.outline.isChecked()
+    win.undo()
+    assert r.outline.isChecked() and not r.streak.isChecked()
+    settle(qapp, win)
+
+
+def test_protect_lines_switch_previews_and_undoes(qapp, win, monkeypatch):
+    assert not win.ck_lines.isChecked()
+    load_sg(qapp, win)
+    monkeypatch.setattr(win, "reanalyze", lambda *a: (_ for _ in ()).throw(AssertionError("detected again")))
+    shown = win.view_prev.item.pixmap().cacheKey()
+    win.ck_lines.click()
+    settle(qapp, win)
+    assert win.view_prev.item.pixmap().cacheKey() != shown and win.params.protect_lines
+    win.sp_detail.setValue(1.0)
+    win.undo()
+    assert win.ck_lines.isChecked()
+    win.undo()
+    assert not win.ck_lines.isChecked() and not win.read_params().protect_lines
+    assert win.statusBar().currentMessage() == "Desfeito: Proteger traços finos."
+    settle(qapp, win)
+
+
+def test_protect_lines_without_image_keeps_the_choice(qapp, win):
+    win.ck_lines.click()
+    settle(qapp, win)
+    assert win.analysis is None
+    load_sg(qapp, win)
+    assert win.ck_lines.isChecked() and win.params.protect_lines

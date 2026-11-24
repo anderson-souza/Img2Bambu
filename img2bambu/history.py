@@ -6,7 +6,7 @@ from .params import Palette
 
 @dataclass
 class Snapshot:
-    values: list                       # numeric fields, in window order
+    values: list                       # numeric fields and the thin lines switch, in window order
     palette: Palette | None
     analysis: object
     pending: bool                      # a detection was running, so palette/analysis predate `values`

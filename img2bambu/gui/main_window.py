@@ -116,9 +116,12 @@ class ColorRow(QWidget):
         self.base.setToolTip("Cor da base de trás (silhueta inteira)")
         self.streak = QCheckBox("Filtro reflexo")
         self.streak.setToolTip("Remove listras finas desta cor (reflexos de brilho)")
+        self.outline = QCheckBox("Contorno")
+        self.outline.setToolTip("Mantém os traços finos desta cor, com largura imprimível (mínimo 0,42 mm)")
         self.merge = QComboBox(); self.merge.setToolTip("Mesclar esta cor em outra")
         self.pct = QLabel()
-        for w in (self.drop, self.sample, QLabel("→"), self.swatch, self.base, self.streak, self.merge, self.pct):
+        for w in (self.drop, self.sample, QLabel("→"), self.swatch, self.base, self.streak, self.outline,
+                  self.merge, self.pct):
             lay.addWidget(w)
         lay.addStretch()
 
@@ -130,6 +133,8 @@ class ColorRow(QWidget):
         self.sample.setStyleSheet(f"background:{hex_color(pal.samples[self.idx])}; border:1px solid #555;")
         self.base.setChecked(pal.base_index == self.idx)
         self.streak.blockSignals(True); self.streak.setChecked(self.idx in pal.streak); self.streak.blockSignals(False)
+        self.outline.blockSignals(True); self.outline.setChecked(self.idx in pal.outline)
+        self.outline.blockSignals(False)
         self.merge.blockSignals(True)
         self.merge.clear(); self.merge.addItem("—", -1)
         for j, cj in enumerate(pal.colors):
@@ -139,7 +144,7 @@ class ColorRow(QWidget):
         self.merge.setCurrentIndex(max(0, self.merge.findData(target)))
         self.merge.blockSignals(False)
         merged = pal.resolve(self.idx) != self.idx
-        for w in (self.base, self.streak):
+        for w in (self.base, self.streak, self.outline):
             w.setEnabled(not merged)
 
     def pick(self, field, title):
@@ -205,7 +210,7 @@ class MainWindow(QMainWindow):
         sl.addStretch()
         scroll = QScrollArea(); scroll.setWidgetResizable(True); scroll.setWidget(side)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setMinimumWidth(470)
+        scroll.setMinimumWidth(570)
         split.addWidget(scroll)
         split.setStretchFactor(0, 3); split.setStretchFactor(1, 2)
         self.setCentralWidget(split)
@@ -266,6 +271,12 @@ class MainWindow(QMainWindow):
         self.sp_streak = self._dspin(0.0, 3.0, self.params.streak_radius_mm, 0.1, " mm")
         self.sp_streak.setToolTip("Raio mínimo de áreas mantidas nas cores com 'Filtro reflexo'")
         f.addRow("Filtro reflexo (raio):", self.sp_streak)
+        self.ck_lines = QCheckBox("Proteger traços finos")
+        self.ck_lines.setToolTip("Mantém os traços de pelo menos 0,42 mm de todas as cores, menos as com "
+                                 "'Filtro reflexo' (para traços mais finos, marque 'Contorno' na cor)")
+        self.ck_lines.setChecked(self.params.protect_lines)
+        self.ck_lines.toggled.connect(self.lines_changed)
+        f.addRow(self.ck_lines)
         v.addLayout(f)
         self.rows_box = QVBoxLayout(); v.addLayout(self.rows_box)
         self.base_group = QButtonGroup(self)
@@ -396,6 +407,7 @@ class MainWindow(QMainWindow):
         p.filaments = self.sp_fil.value()
         p.smooth = self.sp_smooth.value()
         p.min_detail_mm = self.sp_detail.value()
+        p.protect_lines = self.ck_lines.isChecked()
         p.streak_radius_mm = self.sp_streak.value()
         p.width_mm = self.sp_w.value()
         p.base_mm = self.sp_base.value()
@@ -446,6 +458,7 @@ class MainWindow(QMainWindow):
             r = ColorRow(self, i)
             self.base_group.addButton(r.base, i)
             r.streak.toggled.connect(lambda on, i=i: self.set_streak(i, on))
+            r.outline.toggled.connect(lambda on, i=i: self.set_outline(i, on))
             r.merge.currentIndexChanged.connect(lambda _, i=i: self.set_merge(i))
             self.rows_box.addWidget(r)
             self.rows.append(r)
@@ -472,7 +485,15 @@ class MainWindow(QMainWindow):
 
     def set_streak(self, i, on):
         (self.palette.streak.add if on else self.palette.streak.discard)(i)
+        if on:
+            self.palette.outline.discard(i)
         self.palette_changed("Filtro reflexo")
+
+    def set_outline(self, i, on):
+        (self.palette.outline.add if on else self.palette.outline.discard)(i)
+        if on:
+            self.palette.streak.discard(i)
+        self.palette_changed("Contorno")
 
     def set_merge(self, i):
         target = self.rows[i].merge.currentData()
@@ -550,6 +571,10 @@ class MainWindow(QMainWindow):
         self.refresh_rows()
         self.debounce.start()
 
+    def lines_changed(self):
+        self.record("Proteger traços finos")
+        self.params_changed()
+
     def params_changed(self):
         if self.analysis is not None:
             h, w = self.analysis.sil.shape
@@ -622,7 +647,8 @@ class MainWindow(QMainWindow):
     def snapshot(self):
         # why: until a new image is detected, palette and analysis still belong to the previous one
         pal, an = (None, None) if self.fresh_image else (copy.deepcopy(self.palette), self.analysis)
-        return Snapshot([sp.value() for sp in self.fields.values()], pal, an, self.detecting)
+        values = [sp.value() for sp in self.fields.values()] + [self.ck_lines.isChecked()]
+        return Snapshot(values, pal, an, self.detecting)
 
     def forget_history(self):
         self.history.clear()
@@ -650,8 +676,9 @@ class MainWindow(QMainWindow):
             return
         label, st = step
         self.undo_msg = f"Desfeito: {label}."
-        for sp, v in zip(self.fields.values(), st.values, strict=True):
+        for sp, v in zip(self.fields.values(), st.values[:-1], strict=True):
             sp.blockSignals(True); sp.setValue(v); sp.blockSignals(False)
+        self.ck_lines.blockSignals(True); self.ck_lines.setChecked(st.values[-1]); self.ck_lines.blockSignals(False)
         self.read_params()
         self.debounce.stop()
         self.disarm()
