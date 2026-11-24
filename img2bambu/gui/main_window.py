@@ -1,4 +1,5 @@
 import copy
+import io
 import os
 import subprocess
 
@@ -35,12 +36,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import bambu, pipeline, preview3d, segment
+from .. import bambu, pipeline, preview3d, project, segment
 from ..history import History, Snapshot
 from ..params import Params, hex_color
 from .view3d import View3D
 from .worker import Task
 
+PROJECT_FILTER = f"Projeto Img2Bambu (*{project.SUFFIX})"
 IMG_FILTER = "Imagens (*.png *.jpg *.jpeg *.webp *.bmp)"
 
 
@@ -165,6 +167,8 @@ class MainWindow(QMainWindow):
         self.pool = QThreadPool.globalInstance()
         self.params = Params()
         self.image_path = None
+        self.image = None               # (name, file bytes as loaded), None before the first image
+        self.project_path = None
         self.rgba = None
         self.analysis = None
         self.palette = None
@@ -221,6 +225,12 @@ class MainWindow(QMainWindow):
         }
         for label, sp in self.fields.items():
             sp.valueChanged.connect(lambda _, label=label: self.record(label, key=label))
+        self.param_fields = {
+            "bg_tolerance": self.sp_tol, "n_colors": self.sp_n, "filaments": self.sp_fil, "smooth": self.sp_smooth,
+            "min_detail_mm": self.sp_detail, "streak_radius_mm": self.sp_streak, "width_mm": self.sp_w,
+            "base_mm": self.sp_base, "relief_mm": self.sp_relief,
+        }
+        self._menu()
         self.last = self.snapshot()
         QShortcut(QKeySequence("Ctrl+Z"), self, self.undo)
         for sp in self.findChildren(QAbstractSpinBox):
@@ -229,6 +239,14 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self.load_presets)
 
     # ---------- UI groups ----------
+    def _menu(self):
+        m = self.menuBar().addMenu("Arquivo")
+        for text, keys, slot in (("Salvar projeto", "Ctrl+S", self.save_project),
+                                 ("Salvar projeto como…", "Ctrl+Shift+S", self.save_project_as)):
+            a = m.addAction(text)
+            a.setShortcut(QKeySequence(keys))
+            a.triggered.connect(lambda _, slot=slot: slot())
+
     def _group_image(self):
         g = QGroupBox("1. Imagem"); f = QFormLayout(g)
         row = QHBoxLayout()
@@ -383,11 +401,14 @@ class MainWindow(QMainWindow):
             return
         self.settings.setValue("dir", os.path.dirname(path))
         try:
-            self.rgba = segment.load_image(path)
+            with open(path, "rb") as f:
+                data = f.read()
+            self.rgba = segment.load_image(io.BytesIO(data))
         except Exception as e:  # noqa: BLE001 — why: any decode error is shown to the user
             QMessageBox.critical(self, "Erro", f"Não foi possível abrir a imagem:\n{e}")
             return
         self.image_path = path
+        self.image = os.path.basename(path), data
         self.fresh_image = True
         self.disarm()
         self.lbl_file.setText(os.path.basename(path))
@@ -698,6 +719,64 @@ class MainWindow(QMainWindow):
             self.run_preview()
         self.last = self.snapshot()
         self.status(self.undo_msg)
+
+    # ---------- project ----------
+    def current_project(self):
+        machine, process, filament = (cb.currentText() for cb in (self.cb_machine, self.cb_process, self.cb_filament))
+        return project.Project(*self.image, self.read_params(), self.palette, self.analysis, machine, process,
+                               filament, self.ck_check.isChecked(), self.ed_name.text())
+
+    def can_save(self):
+        if self.image is None:
+            QMessageBox.information(self, "Img2Bambu", "Abra uma imagem primeiro.")
+        elif self.detecting:
+            self.status("Aguarde a detecção de cores terminar para salvar.")
+        elif self.fresh_image:
+            QMessageBox.warning(self, "Img2Bambu", "As cores desta imagem não foram detectadas.")
+        else:
+            return True
+        return False
+
+    def save_project(self):
+        if self.project_path is None:
+            return self.save_project_as()
+        return self.can_save() and self.write_project(self.project_path)
+
+    def save_project_as(self):
+        if not self.can_save():
+            return False
+        suggest = self.project_path or os.path.join(os.path.dirname(self.image_path or ""),
+                                                    os.path.splitext(self.image[0])[0] + project.SUFFIX)
+        path, _ = QFileDialog.getSaveFileName(self, "Salvar projeto", suggest, PROJECT_FILTER)
+        if not path:
+            return False
+        if not path.lower().endswith(project.SUFFIX):
+            path += project.SUFFIX
+            # why: the dialog only asked about the name without the suffix
+            if os.path.exists(path) and self.ask(f"{os.path.basename(path)} já existe. Substituir?",
+                                                 "Sim", "Não") != "Sim":
+                return False
+        return self.write_project(path)
+
+    def write_project(self, path):
+        try:
+            project.save(path, self.current_project())
+        except Exception as e:  # noqa: BLE001 — why: any failure to save is shown to the user
+            QMessageBox.critical(self, "Erro", f"Não foi possível salvar o projeto:\n{e}")
+            return False
+        self.project_path = path
+        self.status(f"Projeto salvo: {os.path.basename(path)}.")
+        return True
+
+    def ask(self, text, *answers):
+        """Text of the clicked button; the last answer is also the one of closing the dialog."""
+        box = QMessageBox(QMessageBox.Question, "Img2Bambu", text, QMessageBox.NoButton, self)
+        # why: Qt's standard buttons have English labels
+        buttons = [box.addButton(a, QMessageBox.ActionRole) for a in answers]
+        box.setDefaultButton(buttons[0])
+        box.setEscapeButton(buttons[-1])
+        box.exec()
+        return next((a for a, b in zip(answers, buttons, strict=True) if b is box.clickedButton()), answers[-1])
 
     # ---------- export ----------
     def generate(self):

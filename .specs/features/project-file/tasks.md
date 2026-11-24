@@ -139,9 +139,9 @@ T7 → T8
 
 **Done when**:
 
-- [ ] `open_image` keeps the loaded bytes
-- [ ] C1, C8-C12, C17-C21, C23, C39, C55 pass
-- [ ] Full gate passes; no existing test deleted or weakened
+- [x] `open_image` keeps the loaded bytes
+- [x] C8-C12, C17-C21, C23, C39, C55 pass
+- [x] Full gate passes; no existing test deleted or weakened
 
 **Tests**: integration
 **Gate**: full
@@ -161,7 +161,7 @@ T7 → T8
 **Done when**:
 
 - [ ] controls are filled with signals blocked
-- [ ] C2, C3, C5, C7, C13-C16, C22, C32-C34, C37, C40, C54, C56 pass
+- [ ] C1-C3, C5, C7, C13-C16, C22, C32-C34, C37, C40, C54, C56 pass
 - [ ] Full gate passes; no existing test deleted or weakened
 
 **Tests**: integration
