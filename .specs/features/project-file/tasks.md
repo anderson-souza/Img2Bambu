@@ -407,8 +407,8 @@ Proof: run project | tests/test_gui_project.py::test_export_keeps_its_values PAS
 ## Handoff
 
 **Settled mid-build:** none
-**Dispatched:** none
-**Walked:** none
+**Dispatched:** Verifier, after the commit that records this line (no capture, so no screens sub-agent)
+**Walked:** 2026-11-23, real presets, offscreen. S1: image opened, 4 colors, 120 mm, A1 0.8, Ctrl+S → "Projeto salvo: peca.i2b.". S2: image renamed away, new window, Ctrl+O → same palette, preview, printer, 120 mm. S3: truncated file → error dialog, project unchanged. S4: width 99 → `*`, close asks, Cancelar keeps it open, Ctrl+Z clears `*`, close asks nothing. `gui_smoke.py`: 3 parts, 3MF, 5 filament changes.
 
 ---
 
