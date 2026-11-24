@@ -271,6 +271,16 @@ def _within(m, r):
     return (cv2.distanceTransform((m == 0).astype(np.uint8), cv2.DIST_L2, 5) <= r).astype(np.uint8)
 
 
+def _wide_enough(pieces, dt, width, reach):
+    """Pixels of `pieces` whose width, averaged over about `reach` pixels around, is at least `width`."""
+    # why: an angled line alternates between two pixel widths, so a per-pixel test would cut it into dashes
+    m = pieces.astype(np.float32)
+    k = (2 * int(reach) + 1,) * 2
+    total = cv2.boxFilter(m, -1, k, normalize=False, borderType=cv2.BORDER_CONSTANT)
+    mean = cv2.boxFilter(m * dt, -1, k, normalize=False, borderType=cv2.BORDER_CONSTANT) / np.maximum(total, 1)
+    return (4 * (mean - 0.5) >= width - 0.5).astype(np.uint8)
+
+
 def thin_lines(mask, params, mpp, widen):
     """Upsampled lines of `mask` thinner than the minimum detail; those under LINE_MM are widened or left out."""
     ups = params.upsample
@@ -278,8 +288,6 @@ def thin_lines(mask, params, mpp, widen):
     h, w = mask.shape
     raw = cv2.resize(mask.astype(np.uint8) * 255, (w * ups, h * ups), interpolation=cv2.INTER_LINEAR)
     raw = (raw > 127).astype(np.uint8)
-    if not widen:
-        raw &= _within(_px_dist(raw) >= LINE_MM / mu / 2, LINE_MM / mu / 2)
     dt = _px_dist(raw)
     # why: the blur in `clean` erases lines of one image pixel whatever their width in mm
     limit = max(params.min_detail_mm / mu, LINE_MM / mu, ups + 1)
@@ -290,16 +298,26 @@ def thin_lines(mask, params, mpp, widen):
     # why: splitting at 1.5x the limit keeps a line whose width wobbles around it in one piece
     pieces = raw & (1 - _within(opened(1.5 * limit), ups))
     thin = raw & (1 - opened(limit))
+    if not widen:
+        pieces &= _wide_enough(pieces, dt, LINE_MM / mu, 1.0 / mu)
     n, lab, st, _ = cv2.connectedComponentsWithStats(pieces, 8)
     area = st[:, cv2.CC_STAT_AREA]
-    # why: the mean distance to the edge of a strip is a quarter of its width (pixel centers add 0.5)
-    width = 4 * (np.bincount(lab.ravel(), dt.ravel(), n) / np.maximum(area, 1) - 0.5)
+    # why: in a w x L strip the mean distance to the edge is w/4 - w**3 / (12 w L) (pixel centers add 0.5);
+    # iterating from below gives w, capped at the square of the same area
+    quarter = np.bincount(lab.ravel(), dt.ravel(), n) / np.maximum(area, 1) - 0.5
+    width = np.zeros(n)
+    for _ in range(30):
+        width = np.minimum(4 * (quarter + width ** 3 / (12 * np.maximum(area, 1))), np.sqrt(area))
     length = area / np.maximum(width, 1e-6)
     keep = (length * mu >= LINE_LENGTH_MM) & (length >= LINE_RATIO * width)
     keep &= np.bincount(lab.ravel(), thin.ravel(), n) > 0
     keep[0] = False
     line = keep[lab].astype(np.uint8)
-    line = raw & _within(line, 2 * ups)           # why: joins the line back to the thick part it was split from
+    # why: joins the line back to the thick part it was split from, never to a speck beside it
+    near = raw & _within(line, 2 * ups)
+    n, lab = cv2.connectedComponents(near, connectivity=8)
+    joined = np.bincount(lab.ravel(), line.ravel(), n) > 0
+    line = joined[lab].astype(np.uint8)
     if not widen or not line.any():
         return line
     ridge = (line == 1) & (dt >= cv2.dilate(dt, np.ones((3, 3), np.uint8)) - 1e-3)

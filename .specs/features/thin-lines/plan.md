@@ -3,7 +3,7 @@
 **Approved**: 2026-11-23 - user: "aprovado"
 **Settled mid-build:** none
 **Review:** sent at b2f3788
-**Fix pass:**
+**Fix pass:** done - finding 1: the automatic 0.42 mm rule uses the width averaged along the line, so slanted lines stay whole; 2: width estimate corrected for short shapes; 3: rejoin by connection, not distance; tests for each, plus silhouette clipping, the joined thick part, and unmarked output
 
 ## Problem
 

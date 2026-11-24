@@ -89,12 +89,12 @@ def test_widening_reaches_042_and_leaves_wider_lines(px, expect):
     assert widths == pytest.approx(np.full(len(widths), expect), abs=MPP / 2 + 1e-9)
 
 
-@pytest.mark.parametrize("h, w", [(0.8, 0.8), (0.5, 1.5), (0.4, 1.8)])
+@pytest.mark.parametrize("h, w", [(0.8, 0.8), (0.5, 1.5), (0.4, 1.8), (0.8, 1.8), (0.8, 2.2), (0.5, 1.9)])
 def test_specks_and_short_dashes_of_a_marked_color_go(h, w):
     img = canvas()
     rect(img, DARK, 20, 20, h, w)
     rect(img, DARK, 30, 5, 8, 8)
-    masks, label, *_ = masks_of(img, LIGHT, (DARK,), min_detail_mm=1.0)
+    masks, label, *_ = masks_of(img, LIGHT, (DARK,), min_detail_mm=1.5)
     assert not masks[label(DARK)][:500].any()
 
 
@@ -221,3 +221,75 @@ def test_automatic_colors_keep_masks_disjoint():
     a, b = masks.values()
     assert not (a & b).any() and not ((a | b) & (1 - sil)).any()
     assert all(pt.mesh.is_watertight for pt in geometry.build_parts(sil, masks, pal, p))
+
+
+@pytest.mark.parametrize("h, w", [(0.5, 2.2), (0.8, 2.6), (1.0, 3.5)])
+def test_dash_just_past_the_length_rule_is_a_line(h, w):
+    img = canvas()
+    rect(img, DARK, 20, 20, h, w)
+    rect(img, DARK, 30, 5, 8, 8)
+    masks, label, *_ = masks_of(img, LIGHT, (DARK,), min_detail_mm=1.5)
+    assert masks[label(DARK)][:500].sum() * (MPP / 2) ** 2 == pytest.approx(h * w, rel=0.15)
+
+
+def slanted(width_mm, angle, size=160, mpp=0.252):
+    """Antialiased DARK line through the center, as in generated art at 0.252 mm per pixel."""
+    n = size * 10
+    yy, xx = np.mgrid[:n, :n] - n // 2
+    c, s = np.cos(np.radians(angle)), np.sin(np.radians(angle))
+    on = (abs(yy * c - xx * s) <= width_mm / mpp * 5) & (abs(xx * c + yy * s) < 0.375 * n)
+    f = cv2.resize(on.astype(np.float32), (size, size), interpolation=cv2.INTER_AREA)[..., None]
+    img = canvas(size)
+    img[..., :3] = np.round(f * np.array(DARK) + (1 - f) * np.array(LIGHT))
+    return img
+
+
+@pytest.mark.parametrize("angle", range(0, 91, 10))
+@pytest.mark.parametrize("width", [0.45, 0.6])
+def test_protect_lines_keeps_slanted_printable_lines_whole(width, angle):
+    masks, label, *_ = masks_of(slanted(width, angle), LIGHT, min_detail_mm=1.0, width_mm=160 * 0.252,
+                                protect_lines=True)
+    assert pieces(masks[label(DARK)]) == 1
+
+
+@pytest.mark.parametrize("angle", [10, 30, 45])
+def test_protect_lines_drops_slanted_unprintable_lines(angle):
+    masks, *_ = masks_of(slanted(0.25, angle), LIGHT, min_detail_mm=1.0, width_mm=160 * 0.252, protect_lines=True)
+    assert masks == {}
+
+
+def test_speck_beside_a_marked_line_is_not_absorbed():
+    img = canvas(160)                         # 0.25 mm per pixel
+    img[80, 20:140] = (*DARK, 255)
+    plain = masks_of(img, LIGHT, (DARK,), min_detail_mm=1.5)[0]
+    img[82:85, 60:63] = (*DARK, 255)          # 0.75 mm speck, one pixel away
+    speck = masks_of(img, LIGHT, (DARK,), min_detail_mm=1.5)[0]
+    a, b = next(iter(plain.values())), next(iter(speck.values()))
+    assert a.sum() == b.sum()
+
+
+def test_widened_line_stays_inside_the_silhouette():
+    img = canvas()
+    img[200:, :, 3] = 0
+    img[198:200, 50:350] = (*DARK, 255)       # on the edge: widening would leave the object
+    masks, label, sil, *_ = masks_of(img, LIGHT, (DARK,))
+    assert masks[label(DARK)].any() and not (masks[label(DARK)] & (1 - sil)).any()
+
+
+def test_line_stays_joined_to_its_thick_part():
+    img = canvas()
+    rect(img, DARK, 10, 10, 8, 8)
+    rect(img, DARK, 14, 18, 0.3, 15)
+    masks, label, *_ = masks_of(img, LIGHT, (DARK,), min_detail_mm=1.0)
+    assert pieces(masks[label(DARK)]) == 1
+
+
+def test_without_marks_the_line_rules_never_run(monkeypatch):
+    img = canvas()
+    rect(img, DARK, 20, 0, 0.6, 40)
+    rect(img, DARK, 5, 5, 8, 8)
+    monkeypatch.setattr(segment, "thin_lines", lambda *a: pytest.fail("ran"))
+    an, pal, p, label = analysis(img, LIGHT, min_detail_mm=1.0)
+    sil, masks = segment.build_masks(an, pal, p)
+    expect = segment.clean(segment.assign(an, pal) == label(DARK), p, segment.mm_per_px(an, p), 1.0, 0.3, 0.15) & sil
+    assert (masks[label(DARK)] == expect).all()
