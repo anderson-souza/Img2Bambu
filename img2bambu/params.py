@@ -24,6 +24,8 @@ class Palette:
     base_index: int = 0
     merges: dict = field(default_factory=dict)   # label -> label it is merged into
     streak: set = field(default_factory=set)     # labels that get the highlight-streak filter
+    # invariant: a label is never in both outline and streak
+    outline: set = field(default_factory=set)    # labels whose thin lines are kept and widened to print
     # invariant: samples[i] ("cor na imagem") decides which pixels go to label i; colors[i] is the filament
     samples: list = field(default_factory=list)
     edited: set = field(default_factory=set)     # labels whose sample or filament the user changed

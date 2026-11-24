@@ -63,6 +63,12 @@ def _to_rgb(lab_rows):
     return [tuple(int(c) for c in v) for v in cv2.cvtColor(lab, cv2.COLOR_LAB2RGB).reshape(-1, 3)]
 
 
+# why: one extrusion line of a 0.4 mm nozzle; anything narrower may be skipped by the slicer
+LINE_MM = 0.42
+LINE_LENGTH_MM = 2.0
+LINE_RATIO = 3
+
+
 def kmeans_palette(rgba, sil, n, seed=0):
     """Returns (labels, median colors, centers in LAB, pixel LAB), labels sorted dark -> light."""
     rgb = rgba[..., :3][sil]
@@ -214,6 +220,8 @@ def carry_over(old, new):
         used_old.add(oi); used_new.add(nj)
         new.colors[nj], new.samples[nj] = old.colors[edited[oi]], old.samples[edited[oi]]
         new.edited.add(nj)
+        if edited[oi] in old.outline:
+            new.outline.add(nj); new.streak.discard(nj)
     return new
 
 
@@ -250,6 +258,65 @@ def drop_streaks(m, mpp_up, radius_mm):
     return keep[lab].astype(np.uint8)
 
 
+def _px_dist(m):
+    """Distance in pixels from each pixel of `m` to the nearest pixel outside it."""
+    # why: one pixel of padding makes the image edge count as outside
+    return cv2.distanceTransform(cv2.copyMakeBorder(m, 1, 1, 1, 1, cv2.BORDER_CONSTANT), cv2.DIST_L2, 5)[1:-1, 1:-1]
+
+
+def _within(m, r):
+    """Pixels at most `r` pixels away from `m`."""
+    if not m.any():
+        return np.zeros(m.shape, np.uint8)
+    return (cv2.distanceTransform((m == 0).astype(np.uint8), cv2.DIST_L2, 5) <= r).astype(np.uint8)
+
+
+def thin_lines(mask, params, mpp):
+    """Upsampled mask of the lines of `mask` thinner than the minimum detail, widened to LINE_MM."""
+    ups = params.upsample
+    mu = mpp / ups
+    h, w = mask.shape
+    raw = cv2.resize(mask.astype(np.uint8) * 255, (w * ups, h * ups), interpolation=cv2.INTER_LINEAR)
+    raw = (raw > 127).astype(np.uint8)
+    dt = _px_dist(raw)
+    # why: the blur in `clean` erases lines of one image pixel whatever their width in mm
+    limit = max(params.min_detail_mm / mu, LINE_MM / mu, ups + 1)
+
+    def opened(d):
+        return raw & _within(dt - 0.5 >= d / 2, d / 2)
+
+    # why: splitting at 1.5x the limit keeps a line whose width wobbles around it in one piece
+    pieces = raw & (1 - _within(opened(1.5 * limit), ups))
+    thin = raw & (1 - opened(limit))
+    n, lab, st, _ = cv2.connectedComponentsWithStats(pieces, 8)
+    area = st[:, cv2.CC_STAT_AREA]
+    # why: the mean distance to the edge of a strip is a quarter of its width (pixel centers add 0.5)
+    width = 4 * (np.bincount(lab.ravel(), dt.ravel(), n) / np.maximum(area, 1) - 0.5)
+    length = area / np.maximum(width, 1e-6)
+    keep = (length * mu >= LINE_LENGTH_MM) & (length >= LINE_RATIO * width)
+    keep &= np.bincount(lab.ravel(), thin.ravel(), n) > 0
+    keep[0] = False
+    line = keep[lab].astype(np.uint8)
+    line = raw & _within(line, 2 * ups)           # why: joins the line back to the thick part it was split from
+    if not line.any():
+        return line
+    ridge = (line == 1) & (dt >= cv2.dilate(dt, np.ones((3, 3), np.uint8)) - 1e-3)
+    return line | _within(ridge, (LINE_MM / mu - 1) / 2)
+
+
+def line_masks(an, resolved, palette, params, sil_m):
+    """{label: lines to protect}, disjoint and inside the silhouette; the lower label wins."""
+    mpp = mm_per_px(an, params)
+    lines, taken = {}, np.zeros_like(sil_m)
+    for c in palette.active():
+        if c in palette.outline:
+            m = thin_lines(resolved == c, params, mpp) & sil_m & (1 - taken)
+            if m.any():
+                lines[c] = m
+                taken |= m
+    return lines
+
+
 def build_masks(an: Analysis, palette: Palette, params: Params):
     """Returns (silhouette_mask, {label: mask}) at upsampled resolution; raised masks are disjoint."""
     mpp = mm_per_px(an, params)
@@ -257,6 +324,8 @@ def build_masks(an: Analysis, palette: Palette, params: Params):
     sil_m = clean(an.sil, params, mpp, d, 2.0, 1.0)
     lut = np.array([palette.resolve(i) for i in range(len(palette.colors))] + [-1])
     resolved = lut[assign(an, palette)]          # label -1 indexes the trailing -1 sentinel
+    lines = line_masks(an, resolved, palette, params, sil_m)
+    px_area = (mpp / params.upsample) ** 2
     masks, taken = {}, np.zeros_like(sil_m)
     streak = palette.streak
     for c in palette.active():
@@ -265,6 +334,12 @@ def build_masks(an: Analysis, palette: Palette, params: Params):
         m = clean(resolved == c, params, mpp, d, 0.3, 0.15) & sil_m & (1 - taken)
         if c in streak and params.streak_radius_mm > 0:
             m = drop_streaks(m.astype(np.uint8), mpp / params.upsample, params.streak_radius_mm)
+        for o, line in lines.items():
+            m = m | line & (1 - taken) if o == c else m & (1 - line)
+        if lines:
+            n, lab, st, _ = cv2.connectedComponentsWithStats(m, 8)
+            keep = st[:, cv2.CC_STAT_AREA] * px_area >= 0.3; keep[0] = False
+            m = keep[lab].astype(np.uint8)
         if m.any():
             masks[c] = m
             taken |= m

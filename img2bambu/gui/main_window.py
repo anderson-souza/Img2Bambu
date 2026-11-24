@@ -116,9 +116,12 @@ class ColorRow(QWidget):
         self.base.setToolTip("Cor da base de trás (silhueta inteira)")
         self.streak = QCheckBox("Filtro reflexo")
         self.streak.setToolTip("Remove listras finas desta cor (reflexos de brilho)")
+        self.outline = QCheckBox("Contorno")
+        self.outline.setToolTip("Mantém os traços finos desta cor, com largura imprimível (mínimo 0,42 mm)")
         self.merge = QComboBox(); self.merge.setToolTip("Mesclar esta cor em outra")
         self.pct = QLabel()
-        for w in (self.drop, self.sample, QLabel("→"), self.swatch, self.base, self.streak, self.merge, self.pct):
+        for w in (self.drop, self.sample, QLabel("→"), self.swatch, self.base, self.streak, self.outline,
+                  self.merge, self.pct):
             lay.addWidget(w)
         lay.addStretch()
 
@@ -130,6 +133,8 @@ class ColorRow(QWidget):
         self.sample.setStyleSheet(f"background:{hex_color(pal.samples[self.idx])}; border:1px solid #555;")
         self.base.setChecked(pal.base_index == self.idx)
         self.streak.blockSignals(True); self.streak.setChecked(self.idx in pal.streak); self.streak.blockSignals(False)
+        self.outline.blockSignals(True); self.outline.setChecked(self.idx in pal.outline)
+        self.outline.blockSignals(False)
         self.merge.blockSignals(True)
         self.merge.clear(); self.merge.addItem("—", -1)
         for j, cj in enumerate(pal.colors):
@@ -139,7 +144,7 @@ class ColorRow(QWidget):
         self.merge.setCurrentIndex(max(0, self.merge.findData(target)))
         self.merge.blockSignals(False)
         merged = pal.resolve(self.idx) != self.idx
-        for w in (self.base, self.streak):
+        for w in (self.base, self.streak, self.outline):
             w.setEnabled(not merged)
 
     def pick(self, field, title):
@@ -446,6 +451,7 @@ class MainWindow(QMainWindow):
             r = ColorRow(self, i)
             self.base_group.addButton(r.base, i)
             r.streak.toggled.connect(lambda on, i=i: self.set_streak(i, on))
+            r.outline.toggled.connect(lambda on, i=i: self.set_outline(i, on))
             r.merge.currentIndexChanged.connect(lambda _, i=i: self.set_merge(i))
             self.rows_box.addWidget(r)
             self.rows.append(r)
@@ -472,7 +478,15 @@ class MainWindow(QMainWindow):
 
     def set_streak(self, i, on):
         (self.palette.streak.add if on else self.palette.streak.discard)(i)
+        if on:
+            self.palette.outline.discard(i)
         self.palette_changed("Filtro reflexo")
+
+    def set_outline(self, i, on):
+        (self.palette.outline.add if on else self.palette.outline.discard)(i)
+        if on:
+            self.palette.streak.discard(i)
+        self.palette_changed("Contorno")
 
     def set_merge(self, i):
         target = self.rows[i].merge.currentData()
