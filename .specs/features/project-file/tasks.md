@@ -181,8 +181,8 @@ T7 → T8
 
 **Done when**:
 
-- [ ] C24-C31 pass
-- [ ] Full gate passes; no existing test deleted or weakened
+- [x] C24-C31 pass
+- [x] Full gate passes; no existing test deleted or weakened
 
 **Tests**: integration
 **Gate**: full

@@ -601,3 +601,91 @@ def test_export_keeps_its_values(qapp, make_win, dialogs, custom, img, tmp_path,
     assert (outdir, name) == (str(tmp_path / "saida"), "abelha")
     assert list((tmp_path / "saida").glob("abelha*.stl")) and not w.busy_export
     assert w.ed_name.text() == "peça final" and w.palette != palette
+
+
+def presets_of(w):
+    return w.cb_machine.currentText(), w.cb_process.currentText(), w.cb_filament.currentText()
+
+
+def test_missing_printer_uses_default(qapp, make_win, dialogs, custom):
+    a1 = make_win({k: PRINTERS[k] for k in (A1, "M0")})
+    a1.cb_machine.setCurrentText("M0")
+    open_proj(qapp, a1, dialogs, custom[1])
+    assert presets_of(a1) == (A1, "P a1 fino", "F a1 seda")
+    other = make_win({"M0": PRINTERS["M0"], "Z": (["P z"], ["F z"])})
+    other.cb_machine.setCurrentText("Z")
+    open_proj(qapp, other, dialogs, custom[1])
+    assert presets_of(other) == ("M0", "P m0", "F m0")
+
+
+def test_missing_process_and_filament_use_printer_defaults(qapp, make_win, dialogs, custom):
+    w = make_win({A1: PRINTERS[A1], "M1": (["P um", "P outro", "P dois"], ["F outro", "F dois"])})
+    w.cb_machine.setCurrentText("M1")
+    w.cb_filament.setCurrentText("F outro")
+    open_proj(qapp, w, dialogs, custom[1])
+    assert presets_of(w) == ("M1", "P um", "F dois")
+    w = make_win({"M1": (["P outro", "P dois"], ["F um", "F dois"])})
+    w.cb_process.setCurrentText("P outro")
+    open_proj(qapp, w, dialogs, custom[1])
+    assert presets_of(w) == ("M1", "P dois", "F um")
+
+
+LINES = [f"Impressora: 'M1' → '{A1}'", "Processo: 'P um' → 'P a1 fino'", "Filamento: 'F um' → 'F a1 seda'"]
+
+
+@pytest.fixture
+def elsewhere(qapp, make_win, dialogs, custom):
+    """Another computer, without the project's printer, with the project open."""
+    w = make_win({k: PRINTERS[k] for k in (A1, "M0")})
+    open_proj(qapp, w, dialogs, custom[1])
+    return w
+
+
+def test_substitutions_in_one_warning(elsewhere, dialogs):
+    assert len(dialogs.shown) == 1
+    kind, text = dialogs.shown[0]
+    assert kind == "warning" and text.splitlines()[1:] == LINES
+
+
+def test_substitutions_in_log(elsewhere):
+    log = elsewhere.log.toPlainText().splitlines()
+    assert [x for x in log if "Preset" in x] == [f"⚠ Preset não instalado: {x}" for x in LINES]
+
+
+def test_saving_writes_substitutes(elsewhere, custom):
+    assert content(custom[1])["presets"]["machine"] == "M1"
+    assert elsewhere.save_project()
+    assert content(custom[1])["presets"] == {"machine": A1, "process": "P a1 fino", "filament": "F a1 seda"}
+
+
+def test_no_presets_keeps_names(qapp, make_win, dialogs, custom):
+    w = make_win({})
+    open_proj(qapp, w, dialogs, custom[1])
+    w.sp_w.setValue(60)
+    settle(qapp, w)
+    assert w.save_project()
+    d = content(custom[1])
+    assert d["presets"] == {"machine": "M1", "process": "P um", "filament": "F um"}
+    assert d["params"]["width_mm"] == 60
+
+
+def test_no_presets_warns_once(qapp, make_win, dialogs, custom):
+    w = make_win({})
+    open_proj(qapp, w, dialogs, custom[1])
+    assert len(dialogs.shown) == 1 and dialogs.shown[0][0] == "warning"
+    assert dialogs.shown[0][1].splitlines()[1:] == [
+        "Impressora: 'M1' → mantido no projeto", "Processo: 'P um' → mantido no projeto",
+        "Filamento: 'F um' → mantido no projeto"]
+
+
+def test_empty_preset_keeps_selection(qapp, make_win, dialogs, img, tmp_path):
+    sender, path = make_win({}), tmp_path / "x.i2b"
+    open_img(qapp, sender, dialogs, img)
+    save(sender, dialogs, path)
+    assert content(path)["presets"] == {"machine": "", "process": "", "filament": ""}
+    w = make_win()
+    w.cb_machine.setCurrentText("M1")
+    w.cb_process.setCurrentText("P um")
+    w.cb_filament.setCurrentText("F um")
+    open_proj(qapp, w, dialogs, path)
+    assert presets_of(w) == ("M1", "P um", "F um") and dialogs.shown == []

@@ -43,6 +43,8 @@ from .view3d import View3D
 from .worker import Task
 
 PROJECT_FILTER = f"Projeto Img2Bambu (*{project.SUFFIX})"
+DEFAULT_MACHINE = "Bambu Lab A1 0.4 nozzle"
+PRESETS = "Impressora", "Processo", "Filamento"
 IMG_FILTER = "Imagens (*.png *.jpg *.jpeg *.webp *.bmp)"
 
 
@@ -169,6 +171,7 @@ class MainWindow(QMainWindow):
         self.image_path = None
         self.image = None               # (name, file bytes as loaded), None before the first image
         self.project_path = None
+        self.kept_presets = "", "", ""  # names of the opened project while no presets are installed
         self.rgba = None
         self.analysis = None
         self.palette = None
@@ -374,7 +377,7 @@ class MainWindow(QMainWindow):
         self.cb_machine.blockSignals(True)
         self.cb_machine.addItems(self.db.machines())
         self.cb_machine.blockSignals(False)
-        m = self.settings.value("machine", "Bambu Lab A1 0.4 nozzle")
+        m = self.settings.value("machine", DEFAULT_MACHINE)
         i = self.cb_machine.findText(m)
         self.cb_machine.setCurrentIndex(i if i >= 0 else 0)
         self.machine_changed(self.cb_machine.currentText(), restore=True)
@@ -723,9 +726,11 @@ class MainWindow(QMainWindow):
 
     # ---------- project ----------
     def current_project(self):
-        machine, process, filament = (cb.currentText() for cb in (self.cb_machine, self.cb_process, self.cb_filament))
-        return project.Project(*self.image, self.read_params(), self.palette, self.analysis, machine, process,
-                               filament, self.ck_check.isChecked(), self.ed_name.text())
+        presets = [cb.currentText() for cb in (self.cb_machine, self.cb_process, self.cb_filament)]
+        if not (self.db and self.db.ok):
+            presets = self.kept_presets
+        return project.Project(*self.image, self.read_params(), self.palette, self.analysis, *presets,
+                               self.ck_check.isChecked(), self.ed_name.text())
 
     def can_save(self):
         if self.image is None:
@@ -804,7 +809,7 @@ class MainWindow(QMainWindow):
         self.ck_check.setChecked(p.check)
         self.ed_name.setText(p.name)
         self.ed_out.setText(os.path.join(os.path.dirname(os.path.abspath(path)), "img2bambu_saida"))
-        self.apply_presets(p)
+        missing = self.apply_presets(p)
         self.rgba, self.image, self.image_path = p.rgba, (p.image_name, p.image), None
         self.palette, self.analysis = p.palette, p.analysis
         self.lbl_file.setText(p.image_name)
@@ -817,15 +822,37 @@ class MainWindow(QMainWindow):
         for n in p.notes:
             self.log_msg(f"⚠ {n}")
         self.run_preview()
+        self.warn_presets(missing)
 
     def apply_presets(self, p):
-        if not (self.db and self.db.ok and p.machine):
-            return
-        self.cb_machine.setCurrentIndex(max(0, self.cb_machine.findText(p.machine)))
+        """Selects the project's presets; returns [(what, missing name, substitute or None)]."""
+        want = p.machine, p.process, p.filament
+        if not (self.db and self.db.ok):
+            self.kept_presets = want
+            return [(what, name, None) for what, name in zip(PRESETS, want, strict=True) if name]
+        if not p.machine:
+            return []
+        i = self.cb_machine.findText(p.machine)
+        if i < 0:
+            i = max(0, self.cb_machine.findText(DEFAULT_MACHINE))
+        self.cb_machine.blockSignals(True); self.cb_machine.setCurrentIndex(i); self.cb_machine.blockSignals(False)
+        self.machine_changed(self.cb_machine.currentText())     # selects the defaults of the printer
         for cb, name in ((self.cb_process, p.process), (self.cb_filament, p.filament)):
             i = cb.findText(name)
             if i >= 0:
                 cb.setCurrentIndex(i)
+        got = (cb.currentText() for cb in (self.cb_machine, self.cb_process, self.cb_filament))
+        return [(what, name, g) for what, name, g in zip(PRESETS, want, got, strict=True) if name and name != g]
+
+    def warn_presets(self, missing):
+        if not missing:
+            return
+        lines = [f"{what}: '{name}' → " + (f"'{sub}'" if sub else "nenhum" if sub == "" else "mantido no projeto")
+                 for what, name, sub in missing]
+        for line in lines:
+            self.log_msg(f"⚠ Preset não instalado: {line}")
+        QMessageBox.warning(self, "Presets não instalados",
+                            "Este computador não tem estes presets do projeto:\n" + "\n".join(lines))
 
     def ask(self, text, *answers):
         """Text of the clicked button; the last answer is also the one of closing the dialog."""
