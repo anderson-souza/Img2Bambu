@@ -28,6 +28,8 @@ Img2Bambu: PNG/JPG image → multicolor 3MF project for Bambu Studio. Output = o
 - CLI: `python -m img2bambu image.png --width 150 --colors 3 --check` (`--stl-only` skips Bambu Studio; `--printer/--process/--filament` take Bambu system preset names). Packaged exe: `Img2Bambu.exe --cli image.png ...`, output via `IMG2BAMBU_LOG` env var (windowed build has no stdout).
 - Tests: `python -m pytest`; single test: `python -m pytest tests/test_core.py::test_merge_reduces_parts`; skip slow: `python -m pytest -m "not slow"`.
   - `slow` test slices a real image via the Bambu Studio CLI; it is auto-skipped unless Bambu Studio is installed and `../new abelha/Mascote Abelha com Placa ABELHÃO.png` exists (outside the repo).
+  - With the Flatpak it fails (pytest's `tmp_path` is in `/tmp`, which the sandbox cannot read); instead run the CLI with `--out <folder under home> --check`.
+- Contour tests: measure on `analyze` → `build_masks` output too, not only on drawn masks: real masks have steps of one image pixel (2 px upsampled) that ideal ones lack.
 - Lint: `python -m ruff check .` (config in `pyproject.toml`; `ruff format` is intentionally not used).
 - GUI smoke (headless, offscreen Qt): `python tests/gui_smoke.py <image> <outdir> <screenshot.png>`
   - Writes `QSettings`: on Linux, prefix `XDG_CONFIG_HOME=<scratch>`. With the Flatpak, `<outdir>` must be under home (a refused folder opens a modal dialog).
@@ -42,7 +44,8 @@ Pipeline (`pipeline.export`) — same path for CLI (`__main__.py`) and GUI:
 
 1. `segment.analyze` — load RGBA, compute silhouette (alpha, or flood-fill from corners with `bg_tolerance` when image has no transparency), crop to bbox, k-means in LAB → `Palette` (labels sorted dark→light for determinism), suggest base (most common label on outer ring) and streak-filter colors (light, low-saturation).
 2. `segment.build_masks` — at `upsample`× resolution: clean masks (blur, morph open/close by `min_detail_mm`, drop small blobs/holes), apply `Palette.merges` via `resolve`, optional `drop_streaks` (removes glossy-highlight lines thinner than `streak_radius_mm`). Raised masks are disjoint and inside the silhouette (tests enforce this).
-3. `geometry.build_parts` — contours → shapely polygons (mm, Y up) → `trimesh` extrusions. Base at z=0..base_mm, colors at base_mm..+relief_mm. Raises if any mesh not watertight.
+3. `geometry.build_parts` — `contours.trace` (all masks together; pixel-edge boundaries, each shared stretch smoothed once, corners ≥ 45° kept, pixel fallback on crossings) → shapely polygons (mm, Y up) → `trimesh` extrusions. Base at z=0..base_mm, colors at base_mm..+relief_mm. Raises if any mesh not watertight.
+   - invariant: neighbours share the same line; never smooth or simplify one color's polygon on its own (it opens gaps or overlaps).
 4. `export3mf` — write per-color STLs always; if Bambu Studio found, write a *minimal* 3MF (one object, components = parts, extruder metadata per part) as CLI input.
 5. `bambu.export_project` — run Bambu Studio CLI (`--load-settings machine;process`, `--load-filaments` ×N, `--export-3mf`), then `patch_project` fixes the result. Optional `slice_check` slices the project to verify filament changes.
 
@@ -57,6 +60,8 @@ GUI (`gui/main_window.py`, PySide6): long work runs as `gui/worker.Task` (QRunna
 Undo (Ctrl+Z, groups 2 and 3 only; `history.py`, AD-002 in `.specs/STATE.md`): a new numeric field goes into `MainWindow.fields`; a palette edit ends in `palette_changed(<label>)`; group 1 changes and opening an image call `forget_history`.
 
 invariant: detection and 2D preview share the tag `self.req`; never bump it while `self.detecting`, except to cancel the detection on purpose, or its result is dropped silently.
+
+hazard: OpenCV morphology with an even kernel shifts the mask, and its default border counts as inside the mask (ledges at the crop). Keep the mirrored kernel and the padding in `segment.clean`.
 
 ## Bambu Studio CLI quirks
 
