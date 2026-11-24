@@ -129,9 +129,7 @@ def test_size_of_synthetic_model():
     p = Params(width_mm=150, base_mm=10, relief_mm=1)
     an = segment.analyze(synthetic(), p)
     x, y, z = preview3d.size(preview3d.build(an, an.palette, p))
-    sil_m, _ = segment.build_masks(an, an.palette, p)
-    # why: to_polys traces contours through pixel centres, losing one upsampled pixel of width (same as export)
-    assert x == pytest.approx(150.0, abs=p.simplify_mm + p.width_mm / sil_m.shape[1])
+    assert x == pytest.approx(150.0, abs=0.02)
     assert z == pytest.approx(11.0)
 
 

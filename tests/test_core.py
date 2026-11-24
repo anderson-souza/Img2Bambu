@@ -61,7 +61,7 @@ def test_diagonal_pixel_ring_extrudes_watertight():
     # outer border at one point -> non-manifold extrusion (seen on real images)
     cells = np.array([[0, 1, 1, 1], [1, 1, 0, 1], [0, 1, 1, 1]], np.uint8)
     m = np.pad(np.kron(cells, np.ones((4, 4), np.uint8)), 2)
-    mesh = geometry.extrude(geometry.to_polys(m, 0.1, 0.0), 0, 1)
+    mesh = geometry.extrude(geometry.to_polys(m, [], 0.1)[0], 0, 1)
     assert mesh is not None and mesh.is_watertight
 
 

@@ -13,7 +13,6 @@ class Params:
     background: str = "alpha"          # "alpha" or "color" (flood-fill from corners)
     bg_tolerance: int = 30
     upsample: int = 2
-    simplify_mm: float = 0.04
     smooth: int = 0                    # mean-shift level before clustering; 0 disables it
     filaments: int = 0                 # merge closest colors until this many remain; 0 disables it
     protect_lines: bool = False        # keep printable thin lines of every color, not only of outline ones

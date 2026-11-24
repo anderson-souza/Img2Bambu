@@ -1,11 +1,12 @@
 from dataclasses import dataclass
 
-import cv2
 import numpy as np
+import shapely
 import trimesh
-from shapely.geometry import MultiPolygon, Polygon
+from shapely.geometry import MultiPolygon
 from shapely.ops import unary_union
 
+from . import contours
 from .params import Palette, Params, hex_color
 
 
@@ -16,36 +17,31 @@ class Part:
     mesh: trimesh.Trimesh
 
 
-def to_polys(m, mm_per_px_up, simplify_mm):
-    """Binary mask (row 0 = top) -> shapely polygons in mm, Y up."""
-    cs, hier = cv2.findContours(m.astype(np.uint8), cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
-    if hier is None:
-        return []
-    hier = hier[0]
-    h = m.shape[0]
+def to_polys(sil_m, masks, mpp_up):
+    """Binary masks (row 0 = top) -> (silhouette, [mask]) polygons in mm, Y up; neighbours share boundaries."""
+    base, colors = contours.trace(sil_m, masks, mpp_up)
+    if not base:
+        return [], [[] for _ in masks]
+    h = sil_m.shape[0]
+    xs = np.flatnonzero(sil_m.any(0))
+    x0, _, x1, _ = unary_union(base).bounds
+    # why: smoothing may move the extreme points by a fraction of a pixel; the width asked for is kept
+    scale = (xs[-1] + 1 - xs[0]) / (x1 - x0)
 
-    def conv(c):
-        c = c[:, 0, :].astype(float)
-        return np.column_stack([c[:, 0] * mm_per_px_up, (h - c[:, 1]) * mm_per_px_up])
+    def to_mm(c):
+        return np.column_stack([(c[:, 0] - x0) * scale + xs[0], (h / 2 - c[:, 1]) * scale + h / 2]) * mpp_up
 
-    polys = []
-    for i, c in enumerate(cs):
-        if hier[i][3] != -1 or len(c) < 3:
-            continue
-        holes, j = [], hier[i][2]
-        while j != -1:
-            if len(cs[j]) >= 3:
-                holes.append(conv(cs[j]))
-            j = hier[j][0]
-        p = Polygon(conv(c), holes).buffer(0).simplify(simplify_mm, preserve_topology=True)
-        if not p.is_empty:
-            polys.append(p)
-    # why: diagonal pixel links leave regions/holes touching at a single point,
-    # which extrudes non-manifold; a 1 µm inset splits those points apart
-    g = unary_union(polys).buffer(-1e-3, join_style="mitre")
-    if g.is_empty:
-        return []
-    return list(g.geoms) if isinstance(g, MultiPolygon) else [g]
+    def finish(polys, inset):
+        # why: regions/holes linked by a pixel diagonal touch at a single point, which extrudes
+        # non-manifold; a tiny inset splits those points apart
+        out = []
+        for p in polys:
+            g = shapely.transform(p, to_mm).buffer(-inset, join_style="mitre", mitre_limit=2)
+            # why: earcut skips vertices a few nm apart and leaves the mesh open
+            out += [q for q in shapely.get_parts(shapely.remove_repeated_points(g, 1e-4)) if not q.is_empty]
+        return out
+    # why: the base recedes at most 2x its inset, so a raised part never sticks out of it
+    return finish(base, 5e-4), [finish(p, 1e-3) for p in colors]
 
 
 def extrude(polys, z0, height):
@@ -66,13 +62,14 @@ def extrude(polys, z0, height):
 
 def build_parts(sil_m, masks, palette: Palette, params: Params):
     mpp_up = params.width_mm / sil_m.shape[1]
-    base = extrude(to_polys(sil_m, mpp_up, params.simplify_mm), 0, params.base_mm)
+    base_polys, color_polys = to_polys(sil_m, list(masks.values()), mpp_up)
+    base = extrude(base_polys, 0, params.base_mm)
     if base is None:
         raise ValueError("Silhueta vazia após limpeza.")
     parts = [Part(f"Base {hex_color(palette.colors[palette.base_index])}",
                   palette.colors[palette.base_index], base)]
-    for c, m in masks.items():
-        mesh = extrude(to_polys(m, mpp_up, params.simplify_mm), params.base_mm, params.relief_mm)
+    for c, polys in zip(masks, color_polys, strict=True):
+        mesh = extrude(polys, params.base_mm, params.relief_mm)
         if mesh is not None:
             parts.append(Part(f"Cor {hex_color(palette.colors[c])}", palette.colors[c], mesh))
     bad = [p.name for p in parts if not p.mesh.is_watertight]
