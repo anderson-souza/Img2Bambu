@@ -221,9 +221,9 @@ T7 → T8
 
 **Done when**:
 
-- [ ] README explains saving, opening and sharing, and that image metadata travels in the file
-- [ ] Build gate passes
-- [ ] Build gate passes; no existing test deleted or weakened
+- [x] README explains saving, opening and sharing, and that image metadata travels in the file
+- [x] Build gate passes
+- [x] Build gate passes; no existing test deleted or weakened
 
 **Tests**: none
 **Gate**: build

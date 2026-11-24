@@ -10,6 +10,13 @@ Imagem (PNG/JPG) → projeto 3MF multicor para Bambu Studio: base com a silhueta
 
 Fluxo na interface: Abrir imagem → ajustar nº de cores / base / mesclar / filtro de reflexo → dimensões → impressora, processo e filamento → **Gerar 3MF** → **Abrir no Bambu Studio**.
 
+### Projetos
+**Arquivo → Salvar projeto** (Ctrl+S) grava um `.i2b` com a imagem original, as cores e mesclagens, as dimensões, os presets escolhidos e o nome do arquivo gerado. **Arquivo → Abrir projeto…** (Ctrl+O) traz tudo de volta, com as cores idênticas, também em outro computador.
+
+- A pasta de saída e o executável do Bambu Studio não vão no arquivo; ao abrir, a saída vira `img2bambu_saida` ao lado do projeto.
+- Presets que não existem no computador são trocados pelo padrão, com aviso. Sem nenhum preset instalado, os nomes originais são mantidos.
+- A imagem vai como foi aberta, com os metadados (uma foto pode conter a localização).
+
 ## Requisitos
 Bambu Studio instalado (usa o CLI dele e os presets de sistema em `%APPDATA%\BambuStudio\system\BBL`). Sem ele, o app gera só os STLs por cor (importe todos juntos e responda "Sim" para objeto único com várias partes).
 
