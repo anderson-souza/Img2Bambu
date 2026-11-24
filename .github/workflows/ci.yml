@@ -7,14 +7,20 @@ on:
 
 jobs:
   test:
-    # why: Windows is the target platform, and PySide6 needs no extra system libs here
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
+      # why: on Linux PySide6 links these system libs even with the offscreen platform
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libopengl0 libxkbcommon0 libdbus-1-3 libfontconfig1
       - run: pip install -r requirements.txt
       - run: python -m ruff check .
       - run: python -m pytest -m "not slow"

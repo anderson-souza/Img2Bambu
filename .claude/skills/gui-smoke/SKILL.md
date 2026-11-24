@@ -19,7 +19,7 @@ python -c "import sys; sys.path.insert(0, 'tests'); from test_core import sage_g
 ## 2. Run
 
 ```bash
-python tests/gui_smoke.py <image> <scratch>/out <scratch>/shot.png
+python tests/gui_smoke.py <image> <home>/.cache/i2b-smoke <scratch>/shot.png
 ```
 
 The script sets `QT_QPA_PLATFORM=offscreen` itself. It polls every 100 ms and prints `TIMEOUT at step N` after 60 s.
@@ -32,13 +32,13 @@ Read the output, not only the exit code:
 |---|---|
 | `palette [...]` line with the expected number of swatches | analysis + color preview worked |
 | `3D part_count N` with N = active colors | geometry built for the 3D tab |
-| `STL: ...` line per part, files present in `<scratch>/out` | export ran |
+| `STL: ...` line per part, files present in `<home>/.cache/i2b-smoke` | export ran |
 | `TIMEOUT at step N` | stuck: 0 = presets never loaded, 1 = preview never finished ("Prévia pronta"), 2 = 3D never built, 3 = export never finished |
 | Python traceback | real failure — report it with the trace |
 
 Exit codes: `0` = Bambu project (3MF) written; `1` = flow finished but no project.
 
-- hazard: without Bambu Studio installed (any Linux/CI box) exit is **1** even when everything worked; the log says `Projeto Bambu não gerado (Bambu Studio ausente ou desativado)`. That is expected — judge by the STL lines. On Windows with Bambu Studio, exit 1 is a failure.
+- hazard: without Bambu Studio installed (e.g. CI) exit is **1** even when everything worked; the log says `Projeto Bambu não gerado (Bambu Studio ausente ou desativado)`. That is expected — judge by the STL lines. With Bambu Studio installed (Windows or Linux), exit 1 is a failure.
 - hazard: offscreen Qt cannot render Qt Quick 3D. Warnings about `QRhi` / "View3D item is not going to display anything" are expected, and the 3D tab is blank in the screenshot. `part_count` is the evidence for 3D, not the picture.
 
 ## 4. Look at the screenshot

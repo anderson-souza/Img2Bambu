@@ -1,5 +1,5 @@
 import os
-import tempfile
+import shutil
 from dataclasses import dataclass, field
 
 from PIL import Image
@@ -38,6 +38,9 @@ def model(an, palette: Palette, params: Params):
 def export(an, palette: Palette, params: Params, outdir, basename, choice: BambuChoice = None,
            db: bambu.PresetDB = None, progress=lambda pct, msg: None):
     os.makedirs(outdir, exist_ok=True)
+    if choice and choice.exe and bambu.is_flatpak(choice.exe) and not bambu.sandbox_sees(outdir):
+        raise RuntimeError(f"O Bambu Studio (Flatpak) não acessa a pasta de saída: {outdir}. "
+                           "Escolha uma dentro da sua pasta pessoal.")
     progress(5, "Separando cores…")
     sil_m, masks, prev = render(an, palette, params)
     progress(30, "Gerando malhas 3D…")
@@ -55,7 +58,18 @@ def export(an, palette: Palette, params: Params, outdir, basename, choice: Bambu
         progress(100, "Concluído (somente STLs).")
         return res
     db = db or bambu.PresetDB()
-    work = tempfile.mkdtemp(prefix="img2bambu_")
+    work = bambu.work_dir()
+    try:
+        _export_bambu(parts, colors, outdir, basename, choice, db, work, res, progress)
+    finally:
+        # why: unlike /tmp, ~/.cache is never emptied by the system
+        if bambu.is_linux():
+            shutil.rmtree(work, ignore_errors=True)
+    progress(100, "Concluído.")
+    return res
+
+
+def _export_bambu(parts, colors, outdir, basename, choice, db, work, res, progress):
     minimal = os.path.join(work, "minimal.3mf")
     export3mf.write_minimal_3mf(parts, minimal, basename, db.bed_center(choice.machine))
     progress(65, "Criando projeto no Bambu Studio…")
@@ -67,5 +81,3 @@ def export(an, palette: Palette, params: Params, outdir, basename, choice: Bambu
         res.check = bambu.slice_check(choice.exe, res.project, workdir=os.path.join(work, "slice"))
         if len(parts) > 1 and not res.check.get("changes"):
             res.warnings.append("Verificação: fatiamento sem trocas de filamento.")
-    progress(100, "Concluído.")
-    return res

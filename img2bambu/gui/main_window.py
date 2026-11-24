@@ -3,8 +3,8 @@ import os
 import subprocess
 
 import numpy as np
-from PySide6.QtCore import QEvent, QSettings, Qt, QThreadPool, QTimer, Signal
-from PySide6.QtGui import QColor, QImage, QKeySequence, QPainter, QPixmap, QShortcut
+from PySide6.QtCore import QEvent, QSettings, Qt, QThreadPool, QTimer, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QImage, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QButtonGroup,
@@ -683,7 +683,7 @@ class MainWindow(QMainWindow):
         if not outdir or not name:
             QMessageBox.warning(self, "Img2Bambu", "Defina pasta de saída e nome do arquivo.")
             return
-        exe = self.ed_exe.text().strip()
+        exe = os.path.expanduser(self.ed_exe.text().strip())
         choice = None
         if exe and os.path.isfile(exe) and self.db and self.db.ok and self.cb_process.currentText() \
                 and self.cb_filament.currentText():
@@ -740,7 +740,9 @@ class MainWindow(QMainWindow):
 
     # ---------- misc ----------
     def browse_exe(self):
-        p, _ = QFileDialog.getOpenFileName(self, "bambu-studio.exe", self.ed_exe.text(), "Executável (*.exe)")
+        p, _ = QFileDialog.getOpenFileName(self, "Bambu Studio" if bambu.is_linux() else "bambu-studio.exe",
+                                           self.ed_exe.text(),
+                                           "Todos (*)" if bambu.is_linux() else "Executável (*.exe)")
         if p:
             self.ed_exe.setText(p)
 
@@ -750,14 +752,14 @@ class MainWindow(QMainWindow):
             self.ed_out.setText(p)
 
     def open_bambu(self):
-        exe = self.ed_exe.text().strip()
+        exe = os.path.expanduser(self.ed_exe.text().strip())
         if self.last_project and os.path.isfile(exe):
             subprocess.Popen([exe, self.last_project])
 
     def open_dir(self):
         d = self.ed_out.text().strip()
         if d and os.path.isdir(d):
-            os.startfile(d)
+            QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.abspath(d)))
 
     def status(self, msg):
         self.statusBar().showMessage(msg)

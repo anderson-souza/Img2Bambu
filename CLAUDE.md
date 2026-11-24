@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Img2Bambu: PNG/JPG image → multicolor 3MF project for Bambu Studio. Output = one object with a base part (silhouette, default 10 mm, color = dominant edge color) plus one raised part per remaining color (default 1 mm). Part i is pre-assigned to filament i. Windows-only in practice (Bambu Studio paths, `winreg`, PyInstaller `.exe`). User-facing strings and README are in Portuguese; code and comments in English.
+Img2Bambu: PNG/JPG image → multicolor 3MF project for Bambu Studio. Output = one object with a base part (silhouette, default 10 mm, color = dominant edge color) plus one raised part per remaining color (default 1 mm). Part i is pre-assigned to filament i. Runs on Windows and Linux (Bambu Studio native or Flatpak); the PyInstaller `.exe` is Windows-only. User-facing strings and README are in Portuguese; code and comments in English.
 
 ## Coding Behavior Contract (12 Rules)
 
@@ -30,9 +30,10 @@ Img2Bambu: PNG/JPG image → multicolor 3MF project for Bambu Studio. Output = o
   - `slow` test slices a real image via the Bambu Studio CLI; it is auto-skipped unless Bambu Studio is installed and `../new abelha/Mascote Abelha com Placa ABELHÃO.png` exists (outside the repo).
 - Lint: `python -m ruff check .` (config in `pyproject.toml`; `ruff format` is intentionally not used).
 - GUI smoke (headless, offscreen Qt): `python tests/gui_smoke.py <image> <outdir> <screenshot.png>`
+  - Writes `QSettings`: on Linux, prefix `XDG_CONFIG_HOME=<scratch>`. With the Flatpak, `<outdir>` must be under home (a refused folder opens a modal dialog).
 - GUI tests: reuse the fixtures in `tests/test_gui_preview3d.py` (`win`, `settle`) and `tests/test_gui_palette.py` (`load_sg`, `answer`). End each test with `settle` (a task outliving the window raises "Signal source has been deleted").
   - hazard: an unstubbed `QMessageBox`/`QColorDialog`/`QFileDialog` blocks the offscreen run forever; monkeypatch it and run pytest under `timeout`.
-  - hazard: `generate()` and `open_image()` write the real `QSettings`; tests and scripts must set `w.settings = QSettings(<tmp ini>, QSettings.IniFormat)`. `tests/gui_smoke.py` does not, so it overwrites the user's saved presets.
+  - hazard: `generate()` and `open_image()` write the real `QSettings`; tests and scripts must set `w.settings = QSettings(<tmp ini>, QSettings.IniFormat)`.
 - Build exe: `python -m PyInstaller --noconfirm img2bambu.spec` → `dist\Img2Bambu\` (ship whole folder). `build/` and `dist/` are artifacts.
 
 ## Architecture
@@ -45,9 +46,11 @@ Pipeline (`pipeline.export`) — same path for CLI (`__main__.py`) and GUI:
 4. `export3mf` — write per-color STLs always; if Bambu Studio found, write a *minimal* 3MF (one object, components = parts, extruder metadata per part) as CLI input.
 5. `bambu.export_project` — run Bambu Studio CLI (`--load-settings machine;process`, `--load-filaments` ×N, `--export-3mf`), then `patch_project` fixes the result. Optional `slice_check` slices the project to verify filament changes.
 
+On Linux, `pipeline.export` first asks the Flatpak sandbox whether it can read the output folder (`bambu.sandbox_sees`) and raises before writing anything.
+
 Key state: `Params` (user dimensions/tuning) and `Palette` (colors, base_index, merges, streak set) in `params.py`. `Palette.active()` = labels not merged away.
 
-`bambu.PresetDB` reads system presets from `%APPDATA%\BambuStudio\system\BBL\{machine,process,filament}\*.json`, resolves `inherits` chains, and filters by `instantiation == "true"` and `compatible_printers`. User presets are not loadable by the CLI, so only system presets are offered.
+`bambu.PresetDB` reads system presets from `presets_root()` (Windows `%APPDATA%\BambuStudio\system\BBL`; Linux Flatpak or `~/.config`) `{machine,process,filament}/*.json`, resolves `inherits` chains, and filters by `instantiation == "true"` and `compatible_printers`. User presets are not loadable by the CLI, so only system presets are offered.
 
 GUI (`gui/main_window.py`, PySide6): long work runs as `gui/worker.Task` (QRunnable on the global QThreadPool); each task carries a `tag` so stale analysis/preview results are discarded. Settings persisted with `QSettings`.
 
@@ -64,3 +67,6 @@ Deliberate workarounds that look like bugs — see `.claude/rules/bambu-cli.md` 
 - Comments are sparse and prefixed `why:`, `hazard:` or `invariant:` — no narration comments.
 - Error/progress messages shown to users are Portuguese.
 - Commits: Conventional Commits, lowercase description, `Co-Authored-By` trailer (so `check_commit.py --allow-trailers`). Stage explicit paths: `.claude/worktrees/` may hold another session's worktree.
+- CI runs on Windows and Ubuntu without Bambu Studio. Platform tests patch `bambu.sys.platform` and set both `HOME` and `USERPROFILE`.
+- Tests must not write real settings: patch `win.settings.setValue` (`test_new_image_starts_fresh` still does write).
+- Tests import shared helpers as `from test_core import ...` (`tests/` is not a package).
