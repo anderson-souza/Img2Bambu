@@ -3,13 +3,13 @@
   "promote_threshold": 2,
   "window_days": 45,
   "quarantine_threshold": 2,
-  "next_id": 6,
+  "next_id": 14,
   "lessons": [
     {
       "id": "L-001",
-      "key": "surviving_mutant::assert the per item values a view hands to its scene e g colour not only the item count",
+      "key": "weak_test::assert the per item values a view hands to its scene e g colour not only the item count",
       "text": "Assert the per-item values a view hands to its scene (e.g. colour), not only the item count",
-      "signal": "surviving_mutant",
+      "signal": "weak_test",
       "scope": "gui",
       "status": "candidate",
       "features": [
@@ -25,9 +25,9 @@
     },
     {
       "id": "L-002",
-      "key": "surviving_mutant::test stale tag discarding on both the success and the failure signal of every tagged task",
+      "key": "weak_test::test stale tag discarding on both the success and the failure signal of every tagged task",
       "text": "Test stale-tag discarding on both the success and the failure signal of every tagged task",
-      "signal": "surviving_mutant",
+      "signal": "weak_test",
       "scope": "gui",
       "status": "candidate",
       "features": [
@@ -79,9 +79,9 @@
     },
     {
       "id": "L-005",
-      "key": "surviving_mutant::make concurrency tests hold the concurrent task open with an explicit sync primitive instead of relying on timing",
+      "key": "weak_test::make concurrency tests hold the concurrent task open with an explicit sync primitive instead of relying on timing",
       "text": "Make concurrency tests hold the concurrent task open with an explicit sync primitive instead of relying on timing",
-      "signal": "surviving_mutant",
+      "signal": "weak_test",
       "scope": "gui",
       "status": "candidate",
       "features": [
@@ -94,6 +94,150 @@
       ],
       "created": "2026-10-23T03:28:58Z",
       "last_seen": "2026-10-23T03:28:58Z"
+    },
+    {
+      "id": "L-006",
+      "key": "ac_gap::test a file reader with real detection output on extreme images because k means centers drift outside 0 255",
+      "text": "Test a file reader with real detection output on extreme images, because k-means centers drift outside 0-255.",
+      "signal": "ac_gap",
+      "scope": "project",
+      "status": "candidate",
+      "features": [
+        "project-file"
+      ],
+      "recurrence": 1,
+      "harmful": 0,
+      "evidence": [
+        "F1/C4 (project)"
+      ],
+      "created": "2026-11-24T23:08:44Z",
+      "last_seen": "2026-11-24T23:08:44Z"
+    },
+    {
+      "id": "L-007",
+      "key": "ac_gap::refuse text that cannot be encoded in utf 8 when reading a file",
+      "text": "Refuse text that cannot be encoded in UTF-8 when reading a file.",
+      "signal": "ac_gap",
+      "scope": "project",
+      "status": "candidate",
+      "features": [
+        "project-file"
+      ],
+      "recurrence": 1,
+      "harmful": 0,
+      "evidence": [
+        "F2 (project)"
+      ],
+      "created": "2026-11-24T23:08:44Z",
+      "last_seen": "2026-11-24T23:08:44Z"
+    },
+    {
+      "id": "L-008",
+      "key": "weak_test::test per image state with a previous good image already loaded",
+      "text": "Test per-image state with a previous good image already loaded.",
+      "signal": "weak_test",
+      "scope": "gui",
+      "status": "candidate",
+      "features": [
+        "project-file"
+      ],
+      "recurrence": 1,
+      "harmful": 0,
+      "evidence": [
+        "F3/C19 (gui)"
+      ],
+      "created": "2026-11-24T23:08:44Z",
+      "last_seen": "2026-11-24T23:08:44Z"
+    },
+    {
+      "id": "L-009",
+      "key": "weak_test::deliver a late 3d result with the 2d tab shown to prove it is discarded",
+      "text": "Deliver a late 3D result with the 2D tab shown to prove it is discarded.",
+      "signal": "weak_test",
+      "scope": "gui",
+      "status": "candidate",
+      "features": [
+        "project-file"
+      ],
+      "recurrence": 1,
+      "harmful": 0,
+      "evidence": [
+        "F4/C15 (gui)"
+      ],
+      "created": "2026-11-24T23:08:44Z",
+      "last_seen": "2026-11-24T23:08:44Z"
+    },
+    {
+      "id": "L-010",
+      "key": "weak_test::test both sides of every validation bound",
+      "text": "Test both sides of every validation bound.",
+      "signal": "weak_test",
+      "scope": "project",
+      "status": "candidate",
+      "features": [
+        "project-file"
+      ],
+      "recurrence": 1,
+      "harmful": 0,
+      "evidence": [
+        "F5/C35 (project)"
+      ],
+      "created": "2026-11-24T23:08:44Z",
+      "last_seen": "2026-11-24T23:08:44Z"
+    },
+    {
+      "id": "L-011",
+      "key": "spec_precision_gap::state in the spec every value that a reader changes on loading",
+      "text": "State in the spec every value that a reader changes on loading.",
+      "signal": "spec_precision_gap",
+      "scope": "project",
+      "status": "candidate",
+      "features": [
+        "project-file"
+      ],
+      "recurrence": 1,
+      "harmful": 0,
+      "evidence": [
+        "F6 (project)"
+      ],
+      "created": "2026-11-24T23:08:44Z",
+      "last_seen": "2026-11-24T23:08:44Z"
+    },
+    {
+      "id": "L-012",
+      "key": "ac_gap::temporary file names must not be longer than the target name",
+      "text": "Temporary file names must not be longer than the target name.",
+      "signal": "ac_gap",
+      "scope": "project",
+      "status": "candidate",
+      "features": [
+        "project-file"
+      ],
+      "recurrence": 1,
+      "harmful": 0,
+      "evidence": [
+        "F7 (project)"
+      ],
+      "created": "2026-11-24T23:08:44Z",
+      "last_seen": "2026-11-24T23:08:44Z"
+    },
+    {
+      "id": "L-013",
+      "key": "weak_test::test a derived mark after an asynchronous detection returns to the saved values",
+      "text": "Test a derived mark after an asynchronous detection returns to the saved values.",
+      "signal": "weak_test",
+      "scope": "gui",
+      "status": "candidate",
+      "features": [
+        "project-file"
+      ],
+      "recurrence": 1,
+      "harmful": 0,
+      "evidence": [
+        "F8 (gui)"
+      ],
+      "created": "2026-11-24T23:08:44Z",
+      "last_seen": "2026-11-24T23:08:44Z"
     }
   ]
 }
