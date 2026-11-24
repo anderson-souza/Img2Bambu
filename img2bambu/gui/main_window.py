@@ -241,7 +241,8 @@ class MainWindow(QMainWindow):
     # ---------- UI groups ----------
     def _menu(self):
         m = self.menuBar().addMenu("Arquivo")
-        for text, keys, slot in (("Salvar projeto", "Ctrl+S", self.save_project),
+        for text, keys, slot in (("Abrir projeto…", "Ctrl+O", self.open_project),
+                                 ("Salvar projeto", "Ctrl+S", self.save_project),
                                  ("Salvar projeto como…", "Ctrl+Shift+S", self.save_project_as)):
             a = m.addAction(text)
             a.setShortcut(QKeySequence(keys))
@@ -767,6 +768,64 @@ class MainWindow(QMainWindow):
         self.project_path = path
         self.status(f"Projeto salvo: {os.path.basename(path)}.")
         return True
+
+    def open_project(self):
+        start = os.path.dirname(self.project_path or self.image_path or "") or self.settings.value("dir", "")
+        path, _ = QFileDialog.getOpenFileName(self, "Abrir projeto", start, PROJECT_FILTER)
+        if not path:
+            return
+        limits = {k: (sp.minimum(), sp.maximum()) for k, sp in self.param_fields.items()}
+        try:
+            p = project.load(path, limits)
+        except Exception as e:  # noqa: BLE001 — why: any failure to open is shown to the user
+            QMessageBox.critical(self, "Erro", f"Não foi possível abrir o projeto:\n{e}")
+            return
+        self.apply_project(path, p)
+
+    def apply_project(self, path, p):
+        self.debounce.stop()
+        self.disarm()
+        # why: drops a detection, a preview and a 3D model still running for the previous image
+        self.req += 1
+        self.req3d += 1
+        self.detecting = self.stale2d = self.fresh_image = False
+        self.reframe3d = True
+        # invariant: signals stay blocked, or each control would start a detection over the restored palette
+        for sp in self.param_fields.values():
+            sp.blockSignals(True)
+        self.cb_bg.blockSignals(True); self.ck_lines.blockSignals(True)
+        for k, sp in self.param_fields.items():
+            sp.setValue(getattr(p.params, k))
+        self.cb_bg.setCurrentIndex(self.cb_bg.findData(p.params.background))
+        self.ck_lines.setChecked(p.params.protect_lines)
+        self.cb_bg.blockSignals(False); self.ck_lines.blockSignals(False)
+        for sp in self.param_fields.values():
+            sp.blockSignals(False)
+        self.ck_check.setChecked(p.check)
+        self.ed_name.setText(p.name)
+        self.ed_out.setText(os.path.join(os.path.dirname(os.path.abspath(path)), "img2bambu_saida"))
+        self.apply_presets(p)
+        self.rgba, self.image, self.image_path = p.rgba, (p.image_name, p.image), None
+        self.palette, self.analysis = p.palette, p.analysis
+        self.lbl_file.setText(p.image_name)
+        self.view_orig.set_image(self.rgba, refit=True)
+        self.view_prev._fitted = False
+        self.read_params()
+        self.build_rows()
+        self.project_path = path
+        self.forget_history()
+        for n in p.notes:
+            self.log_msg(f"⚠ {n}")
+        self.run_preview()
+
+    def apply_presets(self, p):
+        if not (self.db and self.db.ok and p.machine):
+            return
+        self.cb_machine.setCurrentIndex(max(0, self.cb_machine.findText(p.machine)))
+        for cb, name in ((self.cb_process, p.process), (self.cb_filament, p.filament)):
+            i = cb.findText(name)
+            if i >= 0:
+                cb.setCurrentIndex(i)
 
     def ask(self, text, *answers):
         """Text of the clicked button; the last answer is also the one of closing the dialog."""

@@ -160,9 +160,9 @@ T7 → T8
 
 **Done when**:
 
-- [ ] controls are filled with signals blocked
-- [ ] C1-C3, C5, C7, C13-C16, C22, C32-C34, C37, C40, C54, C56 pass
-- [ ] Full gate passes; no existing test deleted or weakened
+- [x] controls are filled with signals blocked
+- [x] C1-C3, C5, C7, C13-C16, C22, C32-C34, C37, C40, C54, C56 pass
+- [x] Full gate passes; no existing test deleted or weakened
 
 **Tests**: integration
 **Gate**: full
