@@ -165,11 +165,11 @@ The user cannot return to a piece to iterate on it, nor hand the work to someone
 
 | Requirement ID | Story | Phase | Status |
 | --- | --- | --- | --- |
-| PROJ-01 | P1: Save and reopen a project | Tasks | In Tasks |
-| PROJ-02 | P1: Transfer the project to another person | Tasks | In Tasks |
-| PROJ-03 | P1: Bad files and failures never cost work | Tasks | In Tasks |
-| PROJ-04 | P2: Unsaved changes are visible and guarded | Tasks | In Tasks |
-| PROJ-05 | Edge Cases | Tasks | In Tasks |
+| PROJ-01 | P1: Save and reopen a project | Execute | Verified |
+| PROJ-02 | P1: Transfer the project to another person | Execute | Verified |
+| PROJ-03 | P1: Bad files and failures never cost work | Execute | Verified |
+| PROJ-04 | P2: Unsaved changes are visible and guarded | Execute | Verified |
+| PROJ-05 | Edge Cases | Execute | Verified |
 
 **Dimensions:** validation, failure and external dependency → stories 2 and 3; state transitions and concurrency → P1 saving during detection, P2 guards; idempotency → Edge Cases; data lifecycle → format version; auth N/A because the app is local; observability → log lines for substitutions and defaults.
 

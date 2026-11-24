@@ -9,7 +9,7 @@ Implement these tasks with the `tlc-spec-driven` skill: **activate it by name an
 ---
 
 **Design**: `.specs/features/project-file/design.md`
-**Status**: In Progress
+**Status**: Done
 **Approved**: 2026-11-23 - user: "aprovado, pode implementar"
 **Build**: `python -m ruff check .; timeout 900 python -m pytest -m "not slow"`
 **Run project**: `timeout 600 python -m pytest -v tests/test_project.py tests/test_gui_project.py`
