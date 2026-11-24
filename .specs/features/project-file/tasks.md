@@ -201,8 +201,8 @@ T7 → T8
 
 **Done when**:
 
-- [ ] C42-C53 pass
-- [ ] Full gate passes; no existing test deleted or weakened
+- [x] C42-C53 pass
+- [x] Full gate passes; no existing test deleted or weakened
 
 **Tests**: integration
 **Gate**: full

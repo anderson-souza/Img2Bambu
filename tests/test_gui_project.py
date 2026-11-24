@@ -8,6 +8,7 @@ import zipfile
 import pytest
 from PIL import Image
 from PySide6.QtCore import QSettings, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
 from test_core import synthetic
 from test_gui_preview3d import calls, settle  # noqa: F401 — why: shared fixtures
@@ -689,3 +690,213 @@ def test_empty_preset_keeps_selection(qapp, make_win, dialogs, img, tmp_path):
     w.cb_filament.setCurrentText("F um")
     open_proj(qapp, w, dialogs, path)
     assert presets_of(w) == ("M1", "P um", "F um") and dialogs.shown == []
+
+
+PLAIN, MARKED = "x.i2b — Img2Bambu", "x.i2b* — Img2Bambu"
+
+
+def test_title_shows_project(qapp, make_win, dialogs, custom):
+    assert custom[0].windowTitle() == PLAIN
+    w = make_win()
+    open_proj(qapp, w, dialogs, custom[1])
+    assert w.windowTitle() == PLAIN
+
+
+def test_substituted_presets_do_not_mark(elsewhere):
+    assert elsewhere.windowTitle() == PLAIN
+
+
+def test_every_saved_value_marks_unsaved(qapp, make_win, dialogs, custom, monkeypatch):
+    w = make_win()
+
+    def pick_color(i, button):
+        monkeypatch.setattr(main_window.QColorDialog, "getColor", lambda *_: QColor(77, 88, 99))
+        getattr(w.rows[i], button).click()
+    changes = {
+        "fundo": lambda: w.cb_bg.setCurrentIndex(0), "tol": lambda: w.sp_tol.setValue(45),
+        **{k: lambda sp=sp: sp.setValue(sp.value() - sp.singleStep()) for k, sp in w.fields.items()},
+        "linhas": w.ck_lines.click, "maquina": lambda: w.cb_machine.setCurrentText("M0"),
+        "processo": lambda: w.cb_process.setCurrentText("P dois"),
+        "filamento": lambda: w.cb_filament.setCurrentText("F dois"), "check": w.ck_check.click,
+        "nome": lambda: w.ed_name.setText("outro"),
+        "amostra": lambda: pick_color(1, "sample"), "filamento da cor": lambda: pick_color(1, "swatch"),
+        "base": lambda: w.rows[0].base.click(), "reflexo": lambda: w.rows[1].streak.click(),
+        "contorno": lambda: w.rows[1].outline.click(), "mesclar": lambda: w.rows[3].merge.setCurrentIndex(0),
+    }
+    assert len(changes) == 22
+    for what, change in changes.items():
+        w.project_path = None
+        open_proj(qapp, w, dialogs, custom[1])
+        assert w.windowTitle() == PLAIN, what
+        change()
+        assert w.windowTitle() == MARKED, what
+        settle(qapp, w)
+        assert w.windowTitle() == MARKED, what
+        assert w.save_project() and w.windowTitle() == PLAIN, what
+        custom[0].save_project()
+
+
+def test_undo_clears_mark(qapp, dialogs, custom):
+    w = custom[0]
+    for change in (lambda: w.sp_w.setValue(60), lambda: w.sp_n.setValue(5), lambda: w.rows[0].base.click()):
+        change()
+        settle(qapp, w)
+        assert w.windowTitle() == MARKED
+        key(qapp, w, Qt.Key_Z)
+        settle(qapp, w)
+        assert w.windowTitle() == PLAIN
+
+
+def test_no_project_never_asks(qapp, ready, dialogs, img):
+    w = ready
+    w.sp_w.setValue(60)
+    settle(qapp, w)
+    title = w.windowTitle()
+    assert title == "Img2Bambu — imagem para 3MF multicor"
+    open_img(qapp, w, dialogs, img)
+    w.sp_w.setValue(70)
+    settle(qapp, w)
+    w.show()
+    assert w.close() and not w.isVisible()
+    assert dialogs.asked == []
+
+
+@pytest.fixture
+def guarded(qapp, custom, dialogs, make_win, tmp_path):
+    """An unsaved project, and each action the guard stops with a check that it happened."""
+    w, path = custom
+    sender = make_win()
+    second, photo = tmp_path / "outro.i2b", tmp_path / "outra.png"
+    Image.fromarray(synthetic()[60:340, 60:300]).save(photo)
+    open_img(qapp, sender, dialogs, photo)
+    save(sender, dialogs, second)
+
+    def again(width=60):
+        w.project_path = None
+        open_proj(qapp, w, dialogs, path)
+        w.sp_w.setValue(width)
+        settle(qapp, w)
+        dialogs.asked.clear()
+        w.show()
+    actions = {
+        "close": (w.close, lambda: not w.isVisible()),
+        "project": (lambda: open_proj(qapp, w, dialogs, second), lambda: w.project_path == str(second)),
+        "image": (lambda: open_img(qapp, w, dialogs, photo),
+                  lambda: w.lbl_file.text() == "outra.png" and w.project_path is None),
+    }
+    return w, path, again, actions
+
+
+def test_guard_asks_on_close_open_and_image(qapp, guarded, dialogs):
+    w, _, again, actions = guarded
+    dialogs.answer = "Cancelar"
+    for act, happened in actions.values():
+        again()
+        act()
+        assert dialogs.asked == [("O projeto x.i2b tem alterações não salvas.", ["Salvar", "Descartar", "Cancelar"])]
+        assert not happened()
+    for act, happened in actions.values():
+        again(185.25)
+        assert w.windowTitle() == PLAIN
+        act()
+        assert dialogs.asked == [] and happened()
+
+
+def test_guard_save_continues(guarded, dialogs):
+    w, path, again, actions = guarded
+    dialogs.answer = "Salvar"
+    for width, (act, happened) in zip((61, 62, 63), actions.values(), strict=True):
+        again(width)
+        act()
+        assert len(dialogs.asked) == 1 and happened()
+        assert content(path)["params"]["width_mm"] == width
+
+
+def test_guard_discard_continues(guarded, dialogs):
+    w, path, again, actions = guarded
+    before = path.read_bytes()
+    dialogs.answer = "Descartar"
+    for act, happened in actions.values():
+        again()
+        act()
+        assert len(dialogs.asked) == 1 and happened()
+        assert path.read_bytes() == before
+
+
+def test_guard_cancel_changes_nothing(guarded, dialogs):
+    w, path, again, actions = guarded
+    before = path.read_bytes()
+    dialogs.answer = "Cancelar"
+    for act, happened in actions.values():
+        again()
+        want = controls(w), rows(w), w.image, w.project_path, len(w.history.steps)
+        act()
+        assert not happened() and w.isVisible() and w.windowTitle() == MARKED
+        assert (controls(w), rows(w), w.image, w.project_path, len(w.history.steps)) == want
+        assert path.read_bytes() == before
+
+
+def test_guard_failed_save_stops(qapp, guarded, dialogs, monkeypatch):
+    w, path, again, actions = guarded
+    dialogs.answer = "Salvar"
+
+    def broken(*_):
+        raise OSError("disco cheio")
+    for act, happened in actions.values():
+        again()
+        with monkeypatch.context() as m:
+            m.setattr(project.os, "replace", broken)
+            act()
+        assert not happened() and w.windowTitle() == MARKED and w.isVisible()
+        assert dialogs.shown.pop()[0] == "critical"
+    for act, happened in actions.values():
+        again()
+        w.sp_n.setValue(6)
+        assert w.detecting
+        act()
+        assert not happened() and w.isVisible()
+        settle(qapp, w)
+        assert w.windowTitle() == MARKED
+
+
+def test_discard_then_cancelled_dialog_keeps_work(qapp, guarded, dialogs, tmp_path):
+    w, path, again, _ = guarded
+    bad = tmp_path / "ruim.i2b"
+    bad.write_bytes(b"nada")
+    bad_img = tmp_path / "ruim.png"
+    bad_img.write_bytes(b"nada")
+    dialogs.answer = "Descartar"
+    again()
+    want = controls(w), rows(w), w.image, w.project_path
+    for act, source in ((open_proj, ""), (open_img, ""), (open_proj, bad), (open_img, bad_img)):
+        dialogs.asked.clear()
+        act(qapp, w, dialogs, source)
+        assert len(dialogs.asked) == 1
+        assert (controls(w), rows(w), w.image, w.project_path) == want and w.windowTitle() == MARKED
+    assert [k for k, _ in dialogs.shown] == ["critical", "critical"]
+
+
+def test_new_image_detaches_project(qapp, dialogs, custom, tmp_path):
+    w, path = custom
+    before, values = path.read_bytes(), controls(w)
+    photo = tmp_path / "outra.png"
+    Image.fromarray(synthetic()[60:340, 60:300]).save(photo)
+    open_img(qapp, w, dialogs, photo)
+    assert w.project_path is None and w.windowTitle() == "Img2Bambu — imagem para 3MF multicor"
+    assert controls(w) == {**values, "nome": "outra"}
+    dialogs.save_to = tmp_path / "novo.i2b"
+    key(qapp, w, Qt.Key_S)
+    assert os.path.normpath(dialogs.suggested[-1]) == str(tmp_path / "outra.i2b")
+    assert content(tmp_path / "novo.i2b")["image_name"] == "outra.png"
+    assert path.read_bytes() == before
+
+
+def test_local_settings_do_not_mark(qapp, dialogs, custom):
+    w = custom[0]
+    w.ed_out.setText("/outra/pasta")
+    w.ed_exe.setText("/outro/exe")
+    w.tabs.setCurrentWidget(w.view3d)
+    settle(qapp, w)
+    w.view_prev.scale(2, 2)
+    w.update_title()
+    assert w.windowTitle() == PLAIN

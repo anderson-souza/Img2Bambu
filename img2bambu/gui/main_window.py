@@ -43,6 +43,7 @@ from .view3d import View3D
 from .worker import Task
 
 PROJECT_FILTER = f"Projeto Img2Bambu (*{project.SUFFIX})"
+TITLE = "Img2Bambu — imagem para 3MF multicor"
 DEFAULT_MACHINE = "Bambu Lab A1 0.4 nozzle"
 PRESETS = "Impressora", "Processo", "Filamento"
 IMG_FILTER = "Imagens (*.png *.jpg *.jpeg *.webp *.bmp)"
@@ -163,7 +164,7 @@ class ColorRow(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Img2Bambu — imagem para 3MF multicor")
+        self.setWindowTitle(TITLE)
         self.resize(1300, 820)
         self.settings = QSettings("img2bambu", "img2bambu")
         self.pool = QThreadPool.globalInstance()
@@ -171,6 +172,7 @@ class MainWindow(QMainWindow):
         self.image_path = None
         self.image = None               # (name, file bytes as loaded), None before the first image
         self.project_path = None
+        self.saved_state = None         # project.settings at the last save or opening
         self.kept_presets = "", "", ""  # names of the opened project while no presets are installed
         self.rgba = None
         self.analysis = None
@@ -234,6 +236,9 @@ class MainWindow(QMainWindow):
             "base_mm": self.sp_base, "relief_mm": self.sp_relief,
         }
         self._menu()
+        for signal in (self.cb_machine.currentTextChanged, self.cb_process.currentTextChanged,
+                       self.cb_filament.currentTextChanged, self.ck_check.toggled, self.ed_name.textChanged):
+            signal.connect(self.update_title)
         self.last = self.snapshot()
         QShortcut(QKeySequence("Ctrl+Z"), self, self.undo)
         for sp in self.findChildren(QAbstractSpinBox):
@@ -400,6 +405,8 @@ class MainWindow(QMainWindow):
 
     # ---------- image / analysis ----------
     def open_image(self):
+        if not self.confirm_discard():
+            return
         path, _ = QFileDialog.getOpenFileName(self, "Abrir imagem", self.settings.value("dir", ""), IMG_FILTER)
         if not path:
             return
@@ -413,6 +420,7 @@ class MainWindow(QMainWindow):
             return
         self.image_path = path
         self.image = os.path.basename(path), data
+        self.project_path = None
         self.fresh_image = True
         self.disarm()
         self.lbl_file.setText(os.path.basename(path))
@@ -460,6 +468,7 @@ class MainWindow(QMainWindow):
             self.log_msg(an.note)
         self.apply_auto_merge()
         self.last = self.snapshot()
+        self.update_title()
         self.build_rows()
         self.run_preview()
 
@@ -679,11 +688,13 @@ class MainWindow(QMainWindow):
         self.history.clear()
         self.last = self.snapshot()
         self.undo_msg = None
+        self.update_title()
 
     def record(self, label, key=None):
         before, self.last = self.last, self.snapshot()
         self.history.record(label, before, self.last, key)
         self.undo_msg = None
+        self.update_title()
 
     def no_effect(self, label, st):
         # why: a run of a field back to its start still differs by the detection that ran meanwhile
@@ -722,6 +733,7 @@ class MainWindow(QMainWindow):
         else:
             self.run_preview()
         self.last = self.snapshot()
+        self.update_title()
         self.status(self.undo_msg)
 
     # ---------- project ----------
@@ -731,6 +743,31 @@ class MainWindow(QMainWindow):
             presets = self.kept_presets
         return project.Project(*self.image, self.read_params(), self.palette, self.analysis, *presets,
                                self.ck_check.isChecked(), self.ed_name.text())
+
+    def unsaved(self):
+        # why: without a project nobody asked to keep the work, so there is nothing to warn about
+        return self.project_path is not None and project.settings(self.current_project()) != self.saved_state
+
+    def update_title(self):
+        if self.project_path is None:
+            self.setWindowTitle(TITLE)
+        else:
+            mark = "*" if self.unsaved() else ""
+            self.setWindowTitle(f"{os.path.basename(self.project_path)}{mark} — Img2Bambu")
+
+    def confirm_discard(self):
+        """False when the user wants to keep the current project, or saving it did not work."""
+        if not self.unsaved():
+            return True
+        answer = self.ask(f"O projeto {os.path.basename(self.project_path)} tem alterações não salvas.",
+                          "Salvar", "Descartar", "Cancelar")
+        return self.save_project() if answer == "Salvar" else answer == "Descartar"
+
+    def closeEvent(self, e):
+        if self.confirm_discard():
+            e.accept()
+        else:
+            e.ignore()
 
     def can_save(self):
         if self.image is None:
@@ -771,10 +808,14 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Erro", f"Não foi possível salvar o projeto:\n{e}")
             return False
         self.project_path = path
+        self.saved_state = project.settings(self.current_project())
+        self.update_title()
         self.status(f"Projeto salvo: {os.path.basename(path)}.")
         return True
 
     def open_project(self):
+        if not self.confirm_discard():
+            return
         start = os.path.dirname(self.project_path or self.image_path or "") or self.settings.value("dir", "")
         path, _ = QFileDialog.getOpenFileName(self, "Abrir projeto", start, PROJECT_FILTER)
         if not path:
@@ -818,6 +859,7 @@ class MainWindow(QMainWindow):
         self.read_params()
         self.build_rows()
         self.project_path = path
+        self.saved_state = project.settings(self.current_project())
         self.forget_history()
         for n in p.notes:
             self.log_msg(f"⚠ {n}")
