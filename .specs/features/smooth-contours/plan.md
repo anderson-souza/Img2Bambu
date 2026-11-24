@@ -2,7 +2,7 @@
 
 **Approved**: 2026-11-23 - user: "aprovado"
 **Settled mid-build:** none
-**Review:** <written when the review is sent - sent at <HEAD short hash>>
+**Review:** sent at b3d1d4d
 **Fix pass:** <written when the fix pass is made - done - <what it changed, or no changes needed>>
 
 ## Problem
