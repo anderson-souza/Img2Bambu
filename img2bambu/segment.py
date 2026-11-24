@@ -271,13 +271,15 @@ def _within(m, r):
     return (cv2.distanceTransform((m == 0).astype(np.uint8), cv2.DIST_L2, 5) <= r).astype(np.uint8)
 
 
-def thin_lines(mask, params, mpp):
-    """Upsampled mask of the lines of `mask` thinner than the minimum detail, widened to LINE_MM."""
+def thin_lines(mask, params, mpp, widen):
+    """Upsampled lines of `mask` thinner than the minimum detail; those under LINE_MM are widened or left out."""
     ups = params.upsample
     mu = mpp / ups
     h, w = mask.shape
     raw = cv2.resize(mask.astype(np.uint8) * 255, (w * ups, h * ups), interpolation=cv2.INTER_LINEAR)
     raw = (raw > 127).astype(np.uint8)
+    if not widen:
+        raw &= _within(_px_dist(raw) >= LINE_MM / mu / 2, LINE_MM / mu / 2)
     dt = _px_dist(raw)
     # why: the blur in `clean` erases lines of one image pixel whatever their width in mm
     limit = max(params.min_detail_mm / mu, LINE_MM / mu, ups + 1)
@@ -298,22 +300,23 @@ def thin_lines(mask, params, mpp):
     keep[0] = False
     line = keep[lab].astype(np.uint8)
     line = raw & _within(line, 2 * ups)           # why: joins the line back to the thick part it was split from
-    if not line.any():
+    if not widen or not line.any():
         return line
     ridge = (line == 1) & (dt >= cv2.dilate(dt, np.ones((3, 3), np.uint8)) - 1e-3)
     return line | _within(ridge, (LINE_MM / mu - 1) / 2)
 
 
 def line_masks(an, resolved, palette, params, sil_m):
-    """{label: lines to protect}, disjoint and inside the silhouette; the lower label wins."""
+    """{label: lines to protect}, disjoint and inside the silhouette; marked colors, then lower labels, win."""
     mpp = mm_per_px(an, params)
     lines, taken = {}, np.zeros_like(sil_m)
-    for c in palette.active():
-        if c in palette.outline:
-            m = thin_lines(resolved == c, params, mpp) & sil_m & (1 - taken)
-            if m.any():
-                lines[c] = m
-                taken |= m
+    marked = [c for c in palette.active() if c in palette.outline]
+    auto = [c for c in palette.active() if c not in palette.outline | palette.streak] if params.protect_lines else []
+    for c in marked + auto:
+        m = thin_lines(resolved == c, params, mpp, c in palette.outline) & sil_m & (1 - taken)
+        if m.any():
+            lines[c] = m
+            taken |= m
     return lines
 
 

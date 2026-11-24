@@ -604,3 +604,28 @@ def test_outline_and_streak_exclude_each_other_and_undo_together(qapp, win, monk
     win.undo()
     assert r.outline.isChecked() and not r.streak.isChecked()
     settle(qapp, win)
+
+
+def test_protect_lines_switch_previews_and_undoes(qapp, win, monkeypatch):
+    assert not win.ck_lines.isChecked()
+    load_sg(qapp, win)
+    monkeypatch.setattr(win, "reanalyze", lambda *a: (_ for _ in ()).throw(AssertionError("detected again")))
+    shown = win.view_prev.item.pixmap().cacheKey()
+    win.ck_lines.click()
+    settle(qapp, win)
+    assert win.view_prev.item.pixmap().cacheKey() != shown and win.params.protect_lines
+    win.sp_detail.setValue(1.0)
+    win.undo()
+    assert win.ck_lines.isChecked()
+    win.undo()
+    assert not win.ck_lines.isChecked() and not win.read_params().protect_lines
+    assert win.statusBar().currentMessage() == "Desfeito: Proteger traços finos."
+    settle(qapp, win)
+
+
+def test_protect_lines_without_image_keeps_the_choice(qapp, win):
+    win.ck_lines.click()
+    settle(qapp, win)
+    assert win.analysis is None
+    load_sg(qapp, win)
+    assert win.ck_lines.isChecked() and win.params.protect_lines

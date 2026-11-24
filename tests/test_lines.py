@@ -172,3 +172,52 @@ def test_carry_over_keeps_the_mark_of_edited_rows_only():
     # follows the color, not the position
     new = Palette([LIGHT, DARK, PINK], samples=[LIGHT, DARK, PINK])
     assert segment.carry_over(pal(outline={1}, edited={1}), new).outline == {0}
+
+
+def test_protect_lines_is_off_by_default():
+    assert Params().protect_lines is False
+
+
+@pytest.mark.parametrize("on, width, streak, kept", [
+    (True, 0.6, (), True), (False, 0.6, (), False), (True, 0.2, (), False), (True, 0.3, (), False),
+    (True, 0.6, (DARK,), False),
+])
+def test_protect_lines_keeps_printable_lines_of_unmarked_colors(on, width, streak, kept):
+    img = canvas()
+    rect(img, DARK, 20, 0, width, 40)
+    rect(img, DARK, 5, 5, 8, 8)
+    masks, label, *_ = masks_of(img, LIGHT, streak=streak, min_detail_mm=1.0, protect_lines=on)
+    m = masks[label(DARK)][380:430, 200:600]
+    assert m.any() == kept
+    if kept:
+        assert m.sum(0) * MPP / 2 == pytest.approx(np.full(400, width), abs=MPP / 2 + 1e-9)
+
+
+@pytest.mark.parametrize("on, streak, count", [(True, (), 2), (False, (), 1), (True, (DARK,), 1)])
+def test_protect_lines_opens_gaps_for_the_base(on, streak, count):
+    img = canvas(color=DARK)
+    rect(img, LIGHT, 4, 4, 32, 32)
+    rect(img, DARK, 20, 4, 0.6, 32)
+    masks, label, *_ = masks_of(img, DARK, streak=streak, min_detail_mm=1.0, protect_lines=on)
+    assert pieces(masks[label(LIGHT)]) == count
+
+
+def test_marked_line_wins_over_automatic_one():
+    img = canvas()
+    img[200:206, 50:350] = (*DARK, 255)       # automatic, lower label
+    img[206:208, 50:350] = (*PINK, 255)       # marked: widens into it
+    masks, label, *_ = masks_of(img, LIGHT, (PINK,), n=3, min_detail_mm=1.0, protect_lines=True)
+    assert label(DARK) < label(PINK)
+    assert masks[label(PINK)][:, 400].sum() * MPP / 2 == pytest.approx(0.42, abs=MPP / 2 + 1e-9)
+    assert 0 < masks[label(DARK)][:, 400].sum() < 12
+
+
+def test_automatic_colors_keep_masks_disjoint():
+    img = canvas(color=DARK)
+    rect(img, LIGHT, 4, 4, 32, 32)
+    rect(img, PINK, 20, 4, 0.6, 32)
+    rect(img, DARK, 4, 20, 32, 0.6)
+    masks, _, sil, pal, p = masks_of(img, DARK, n=3, min_detail_mm=1.0, protect_lines=True)
+    a, b = masks.values()
+    assert not (a & b).any() and not ((a | b) & (1 - sil)).any()
+    assert all(pt.mesh.is_watertight for pt in geometry.build_parts(sil, masks, pal, p))
