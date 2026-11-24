@@ -13,6 +13,11 @@ Fluxo na interface: Abrir imagem → ajustar nº de cores / base / mesclar / fil
 ## Requisitos
 Bambu Studio instalado (usa o CLI dele e os presets de sistema em `%APPDATA%\BambuStudio\system\BBL`). Sem ele, o app gera só os STLs por cor (importe todos juntos e responda "Sim" para objeto único com várias partes).
 
+### Linux
+Rode pela fonte (`python app.py`). O Bambu Studio é procurado nesta ordem: `bambu-studio` no `PATH`, Flatpak do usuário, Flatpak do sistema (`com.bambulab.BambuStudio`). AppImage e outros: escolha o arquivo em "Executável". Os presets vêm de `~/.var/app/com.bambulab.BambuStudio/config/BambuStudio/system/BBL` ou `~/.config/BambuStudio/system/BBL`; abra o Bambu Studio uma vez para criá-los.
+
+Com o Flatpak, a pasta de saída precisa ser visível para ele (a pasta pessoal serve, `/tmp` não); senão o app a recusa antes de gerar.
+
 ## Notas técnicas
 - O 3MF final é exportado pelo próprio CLI do Bambu Studio e depois corrigido (`bambu.patch_project`): o CLI deixa os parâmetros por filamento com 1 valor, o que faz a GUI rejeitar com "invalid config".
 - O código de saída do CLI não é confiável (crasha ao sair mesmo com sucesso); o app verifica os arquivos gerados.
