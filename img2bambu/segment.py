@@ -67,6 +67,7 @@ def _to_rgb(lab_rows):
 LINE_MM = 0.42
 LINE_LENGTH_MM = 2.0
 LINE_RATIO = 3
+STRIP_MM = 0.5
 
 
 def kmeans_palette(rgba, sil, n, seed=0):
@@ -338,6 +339,43 @@ def line_masks(an, resolved, palette, params, sil_m):
     return lines
 
 
+def fill_strips(masks, resolved, lines, palette, params, sil_m, mu):
+    """Gives narrow bare strips between two colors to the nearer one, where the image is not base-colored."""
+    if len(masks) < 2:
+        return
+    keep_bare = {palette.base_index} | (palette.streak if params.streak_radius_mm > 0 else set())
+    ok = np.isin(resolved, list(keep_bare), invert=True).astype(np.uint8)
+    h, w = sil_m.shape
+    free = cv2.resize(ok, (w, h), interpolation=cv2.INTER_NEAREST) & sil_m
+    for m in masks.values():
+        free &= 1 - m
+    if palette.base_index in lines:
+        free &= 1 - lines[palette.base_index]
+    if not free.any():
+        return
+    ys, xs = np.nonzero(free)
+    order, dist, way = sorted(masks), [], []
+    for c in order:
+        d, idx = cv2.distanceTransformWithLabels((masks[c] == 0).astype(np.uint8), cv2.DIST_L2, 5,
+                                                 labelType=cv2.DIST_LABEL_PIXEL)
+        my, mx = np.nonzero(masks[c])
+        lut = np.zeros((idx.max() + 1, 2), np.int64)
+        lut[idx[my, mx]] = np.column_stack([my, mx])
+        dist.append(d[ys, xs])
+        way.append(lut[idx[ys, xs]] - np.column_stack([ys, xs]))
+    # invariant: argmin keeps the first of equals, so a tie goes to the lower label
+    first, rows = np.argmin(dist, axis=0), np.arange(len(ys))
+    near, to = np.array(dist)[first, rows], np.array(way)[first, rows]
+    strip = np.zeros(len(ys), bool)
+    for k in range(len(order)):
+        # why: distances run between pixel centers, so across a strip of n pixels the two add up to n + 1;
+        # two colors side by side along an edge are both near but not on opposite sides
+        strip |= (first != k) & (near + dist[k] - 1 <= STRIP_MM / mu) & ((to * way[k]).sum(1) <= 0)
+    for k, c in enumerate(order):
+        mine = strip & (first == k)
+        masks[c][ys[mine], xs[mine]] = 1
+
+
 def build_masks(an: Analysis, palette: Palette, params: Params):
     """Returns (silhouette_mask, {label: mask}) at upsampled resolution; raised masks are disjoint."""
     mpp = mm_per_px(an, params)
@@ -364,6 +402,7 @@ def build_masks(an: Analysis, palette: Palette, params: Params):
         if m.any():
             masks[c] = m
             taken |= m
+    fill_strips(masks, resolved, lines, palette, params, sil_m, mpp / params.upsample)
     return sil_m, masks
 
 
