@@ -65,6 +65,27 @@ def test_diagonal_pixel_ring_extrudes_watertight():
     assert mesh is not None and mesh.is_watertight
 
 
+@pytest.mark.parametrize("width, detail", [(100, 0.5), (100, 1.0), (40, 0.5), (200, 2.0)])
+def test_cleaning_does_not_move_the_mask(width, detail):
+    m = np.zeros((200, 200), bool)
+    m[40:160, 60:140] = True
+    p = Params(width_mm=width, min_detail_mm=detail)
+    up = segment.clean(m, p, width / 200, detail, 0.3, 0.15)
+    ys, xs = np.nonzero(up)
+    assert (ys.min(), ys.max(), xs.min(), xs.max()) == (80, 319, 120, 279)
+
+
+def test_cleaning_leaves_no_ledge_where_the_shape_touches_the_crop():
+    y, x = np.mgrid[:600, :600]
+    disc = np.hypot(x - 299.5, y - 299.5) < 300
+    p = Params()
+    touching = segment.clean(disc, p, 0.25, 0.5, 2.0, 1.0)
+    free = segment.clean(np.pad(disc, 20), p, 0.25, 0.5, 2.0, 1.0)[40:-40, 40:-40]
+    # the blur before cleaning still sees the crop, so single pixels may differ, never a ledge
+    assert np.abs(touching.sum(1, dtype=int) - free.sum(1, dtype=int)).max() <= 8
+    assert np.abs(touching.sum(0, dtype=int) - free.sum(0, dtype=int)).max() <= 8
+
+
 def test_merge_reduces_parts():
     p = Params(width_mm=100)
     an = segment.analyze(synthetic(), p)

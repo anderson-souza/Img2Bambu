@@ -238,8 +238,12 @@ def clean(mask, params, mpp, open_mm, min_area_mm2, hole_mm2):
     k_px = int(round(open_mm / mpp)) * ups
     if k_px >= 2:
         k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_px, k_px))
-        m = cv2.morphologyEx(m, cv2.MORPH_OPEN, k)
-        m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, k)
+        # why: OpenCV treats what is outside the image as inside the mask, which leaves ledges along the crop
+        m = cv2.copyMakeBorder(m, *(k_px,) * 4, cv2.BORDER_CONSTANT)
+        # why: an even kernel has no center; without mirroring it for the way back the mask moves one pixel per step
+        back, anchor = cv2.flip(k, -1), (k_px - 1 - k_px // 2,) * 2
+        m = cv2.dilate(cv2.erode(m, k), back, anchor=anchor)
+        m = cv2.erode(cv2.dilate(m, k), back, anchor=anchor)[k_px:-k_px, k_px:-k_px]
     px_area = (mpp / ups) ** 2
     n, lab, st, _ = cv2.connectedComponentsWithStats(m, 8)
     keep = np.zeros(n, bool); keep[1:] = st[1:, cv2.CC_STAT_AREA] * px_area >= min_area_mm2

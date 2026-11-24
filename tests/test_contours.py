@@ -152,8 +152,8 @@ def test_disc_from_a_real_image_is_round(n):
     base, (c,) = geometry.to_polys(sil, list(masks.values()), MM / sil.shape[1])
     t = turns(outline(c[0]))
     assert t.sum() <= 2 * 360 and t.max() <= 15
-    # the base also has the ledges the mask cleaning leaves where the disc touches the crop
-    assert turns(outline(base[0])).max() <= 15
+    t = turns(outline(base[0]))
+    assert t.sum() <= 2 * 360 and t.max() <= 15
 
 
 @pytest.mark.parametrize("n, deg", [(600, 5), (600, 6), (1200, 4), (1200, 1), (2400, 43)])
