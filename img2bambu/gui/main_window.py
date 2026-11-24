@@ -231,6 +231,12 @@ class MainWindow(QMainWindow):
         self.sp_n.setToolTip("Quantidade de cores detectadas automaticamente (AMS = 4 slots)")
         self.sp_n.valueChanged.connect(self.reanalyze)
         f.addRow("Nº de cores:", self.sp_n)
+        self.sp_fil = QSpinBox(); self.sp_fil.setRange(0, 8); self.sp_fil.setValue(self.params.filaments)
+        self.sp_fil.setSpecialValueText("desligado")
+        self.sp_fil.setToolTip("Quantos filamentos usar: as cores mais parecidas são mescladas até sobrar "
+                               "esse número (desligado = não mesclar)")
+        self.sp_fil.valueChanged.connect(self.reanalyze)
+        f.addRow("Filamentos:", self.sp_fil)
         self.sp_smooth = QSpinBox(); self.sp_smooth.setRange(0, 5); self.sp_smooth.setValue(self.params.smooth)
         self.sp_smooth.setToolTip("Achata degradês antes de detectar as cores (0 = desligado)")
         self.sp_smooth.valueChanged.connect(self.reanalyze)
@@ -367,6 +373,7 @@ class MainWindow(QMainWindow):
         p.background = self.cb_bg.currentData()
         p.bg_tolerance = self.sp_tol.value()
         p.n_colors = self.sp_n.value()
+        p.filaments = self.sp_fil.value()
         p.smooth = self.sp_smooth.value()
         p.min_detail_mm = self.sp_detail.value()
         p.streak_radius_mm = self.sp_streak.value()
@@ -392,8 +399,19 @@ class MainWindow(QMainWindow):
         self.analysis, self.palette, self.fresh_image = an, segment.carry_over(keep, an.palette), False
         if an.note:
             self.log_msg(an.note)
+        self.apply_auto_merge()
         self.build_rows()
         self.run_preview()
+
+    def apply_auto_merge(self):
+        # why: carry_over may have marked rows edited, and edited rows must not be merged away
+        n, k = self.params.filaments, len(self.palette.colors)
+        left = segment.auto_merge(self.analysis, self.palette, n)
+        if left > n > 0:
+            self.log_msg(f"Mesclagem automática: só foi possível chegar a {left} filamentos "
+                         f"({len(self.palette.edited)} cores editadas).")
+        elif self.palette.merges:
+            self.log_msg(f"Mesclagem automática: {k} cores → {left} filamento{'s' if left != 1 else ''}.")
 
     def build_rows(self):
         self.disarm()

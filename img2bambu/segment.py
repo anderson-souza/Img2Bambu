@@ -18,6 +18,7 @@ class Analysis:
     lab: np.ndarray = None       # LAB of silhouette pixels, in sil order
     samples: tuple = ()          # initial palette.samples (centers as RGB)
     offset: tuple = (0, 0)       # (y0, x0) of the crop inside the loaded image
+    base: int = 0                # suggested base before any automatic merge
 
 
 def load_image(path):
@@ -120,9 +121,11 @@ def analyze(path_or_rgba, params: Params):
     rgba, sil, offset = _crop(rgba, sil)
     labels, colors, centers, lab = kmeans_palette(smoothed(rgba, sil, params.smooth), sil, params.n_colors)
     samples = _to_rgb(centers)
-    pal = Palette(colors=colors, base_index=suggest_base(labels, sil, len(colors)),
-                  streak=suggest_streak(colors), samples=list(samples))
-    return Analysis(rgba, sil, labels, pal, note, centers, lab, tuple(samples), offset)
+    base = suggest_base(labels, sil, len(colors))
+    pal = Palette(colors=colors, base_index=base, streak=suggest_streak(colors), samples=list(samples))
+    an = Analysis(rgba, sil, labels, pal, note, centers, lab, tuple(samples), offset, base)
+    auto_merge(an, pal, params.filaments)
+    return an
 
 
 def sample_at(an: Analysis, y, x, r=2):
@@ -154,6 +157,44 @@ def assign(an: Analysis, palette: Palette):
     labels = np.full(an.sil.shape, -1, int)
     labels[an.sil] = lab_labels
     return labels
+
+
+def auto_merge(an: Analysis, palette: Palette, n):
+    """Merges the closest rows in LAB until `n` groups remain (n <= 0: none), never an edited one; returns the count."""
+    palette.merges, palette.base_index = {}, an.base
+    k = len(palette.colors)
+    lab = assign(an, palette)
+    share = np.bincount(lab[lab >= 0], minlength=k) / max(1, int((lab >= 0).sum()))
+    edits = any(tuple(s) != an.samples[i] for i, s in enumerate(palette.samples))
+    # why: same basis as assign - exact k-means centers until a sample is edited
+    ref = _to_lab(np.array([tuple(s) for s in palette.samples])) if edits else an.centers
+    # why: OpenCV's 8-bit LAB stores L as L*·2.55, which would let lightness outweigh hue
+    cie = np.asarray(ref, np.float64) * (100 / 255, 1, 1)
+    cen = dict(enumerate(cie))
+    w = {i: float(share[i]) for i in range(k)}
+    members = {i: [i] for i in range(k)}
+    edited = {i: i in palette.edited for i in range(k)}
+    while 0 < n < len(members):
+        heads, best = sorted(members), None
+        for x, a in enumerate(heads):
+            for b in heads[x + 1:]:
+                if edited[a] and edited[b]:
+                    continue
+                d = float(np.linalg.norm(cen[a] - cen[b]))
+                if best is None or d < best[0]:      # invariant: strict < so a tie keeps the lower pair
+                    best = (d, a, b)
+        if best is None:
+            break
+        _, a, b = best
+        keep, drop = (a, b) if (edited[a], w[a]) >= (edited[b], w[b]) else (b, a)
+        tot = w[keep] + w[drop]
+        cen[keep] = (cen[keep] * w[keep] + cen[drop] * w[drop]) / tot if tot else (cen[keep] + cen[drop]) / 2
+        w[keep], edited[keep] = tot, edited[keep] or edited[drop]
+        members[keep] += members.pop(drop)
+    for head, ms in members.items():
+        palette.merges.update({m: head for m in ms if m != head})
+    palette.base_index = palette.resolve(palette.base_index)
+    return len(members)
 
 
 def carry_over(old, new):

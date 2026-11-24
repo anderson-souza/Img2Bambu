@@ -452,3 +452,121 @@ def test_smooth_change_without_image_does_nothing(qapp, win, monkeypatch):
     win.sp_smooth.setValue(3)
     settle(qapp, win)
     assert seen == [] and win.analysis is None
+
+
+def log_lines(w):
+    return w.log.toPlainText().splitlines()
+
+
+def load_sg4(qapp, w, filaments):
+    w.sp_n.setValue(4)
+    w.sp_fil.setValue(filaments)
+    load_sg(qapp, w)
+
+
+def test_filaments_spin_box(qapp, win):
+    s = win.sp_fil
+    assert (s.minimum(), s.maximum(), s.singleStep(), s.value()) == (0, 8, 1, 0)
+    assert s.specialValueText() == "desligado" and s.text() == "desligado"
+    assert s.toolTip() == ("Quantos filamentos usar: as cores mais parecidas são mescladas até sobrar "
+                           "esse número (desligado = não mesclar)")
+    form = win.sp_n.parentWidget().layout().itemAt(0).layout()
+    row_n, _ = form.getWidgetPosition(win.sp_n)
+    assert form.getWidgetPosition(s) == (row_n + 1, form.getWidgetPosition(win.sp_n)[1])
+    assert form.labelForField(s).text() == "Filamentos:"
+
+
+def test_filaments_change_reanalyzes_and_shows_merge(qapp, win):
+    win.sp_n.setValue(4)
+    load_sg(qapp, win)
+    assert win.palette.merges == {}
+    statuses = []
+    win.status = lambda m: statuses.append(m)
+    win.sp_fil.setValue(3)
+    assert statuses[0] == "Detectando cores…"
+    settle(qapp, win)
+    assert win.params.filaments == 3
+    green, patch = row_of(win, GREEN), row_of(win, PATCH)
+    assert win.palette.merges == {patch: green}
+    assert win.rows[patch].merge.currentText() == f"→ {hex_color(win.palette.colors[green])}"
+    assert log_lines(win)[-1] == "Mesclagem automática: 4 cores → 3 filamentos."
+
+
+def test_filaments_off_logs_nothing(qapp, win):
+    load_sg4(qapp, win, 0)
+    assert win.palette.merges == {}
+    assert not any(line.startswith("Mesclagem automática") for line in log_lines(win))
+
+
+def test_manual_merge_stands_until_reanalysis(qapp, win):
+    load_sg4(qapp, win, 3)
+    patch, sage = row_of(win, PATCH), row_of(win, SAGE)
+    r = win.rows[patch].merge
+    r.setCurrentIndex(0)                                   # "—" undoes the automatic merge
+    settle(qapp, win)
+    assert patch not in win.palette.merges
+    r = win.rows[sage].merge
+    r.setCurrentIndex(r.findData(row_of(win, GREEN)))
+    settle(qapp, win)
+    assert win.palette.merges == {sage: row_of(win, GREEN)}
+    win.sp_tol.setValue(win.sp_tol.value() + 1)            # re-analysis recomputes
+    settle(qapp, win)
+    assert win.palette.merges == {row_of(win, PATCH): row_of(win, GREEN)}
+
+
+def test_edit_does_not_recompute_merges(qapp, win, monkeypatch):
+    load_sg4(qapp, win, 3)
+    sage, patch = row_of(win, SAGE), row_of(win, PATCH)
+    before = dict(win.palette.merges)
+    answer(monkeypatch, PATCH, [])
+    win.rows[sage].sample.click()                          # sage row now samples the patch tone
+    settle(qapp, win)
+    win.rows[sage].swatch.click()
+    settle(qapp, win)
+    assert win.palette.merges == before == {patch: row_of(win, GREEN)}
+
+
+def test_filaments_without_image_does_nothing(qapp, win, monkeypatch):
+    calls = []
+    monkeypatch.setattr(win.pool, "start", lambda t: calls.append(t))     # hazard: pool is the global QThreadPool
+    win.sp_fil.setValue(3)
+    assert calls == [] and win.analysis is None
+
+
+def row_by_sample(w, color):
+    return min(range(len(w.analysis.samples)),
+               key=lambda i: sum((a - b) ** 2 for a, b in zip(w.analysis.samples[i], color, strict=True)))
+
+
+def test_reanalysis_recomputes_merges_with_edited_rows(qapp, win, monkeypatch):
+    load_sg4(qapp, win, 3)
+    assert win.palette.merges == {row_of(win, PATCH): row_of(win, GREEN)}
+    answer(monkeypatch, (255, 0, 0), [])
+    win.rows[row_of(win, PATCH)].swatch.click()            # edit the filament of the merged-away row
+    settle(qapp, win)
+    win.sp_tol.setValue(win.sp_tol.value() + 1)
+    settle(qapp, win)
+    patch, green = row_by_sample(win, PATCH), row_by_sample(win, GREEN)
+    assert win.palette.edited == {patch}
+    assert win.palette.merges == {green: patch}            # the edited row survives and absorbs green
+    assert patch in win.palette.active()
+    assert log_lines(win)[-1] == "Mesclagem automática: 4 cores → 3 filamentos."
+
+
+def test_too_many_edited_rows_logs_stop(qapp, win, monkeypatch):
+    load_sg4(qapp, win, 0)
+    answer(monkeypatch, (255, 0, 0), [])
+    for c in (SAGE, GREEN, PATCH):
+        win.rows[row_of(win, c)].swatch.click()
+        settle(qapp, win)
+    win.sp_fil.setValue(2)
+    settle(qapp, win)
+    assert len(win.palette.edited) == 3 and len(win.palette.active()) == 3
+    assert set(win.palette.active()) == win.palette.edited
+    assert log_lines(win)[-1] == "Mesclagem automática: só foi possível chegar a 3 filamentos (3 cores editadas)."
+
+
+def test_one_filament_logs_singular(qapp, win):
+    load_sg4(qapp, win, 1)
+    assert len(win.palette.active()) == 1 and win.palette.active() == [win.palette.base_index]
+    assert log_lines(win)[-1] == "Mesclagem automática: 4 cores → 1 filamento."
