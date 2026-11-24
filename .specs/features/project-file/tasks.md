@@ -118,9 +118,9 @@ T7 → T8
 
 **Done when**:
 
-- [ ] every rule under **Validation** in design.md is enforced
-- [ ] C35, C36, C41 pass
-- [ ] Quick gate passes; no existing test deleted or weakened
+- [x] every rule under **Validation** in design.md is enforced
+- [x] C35, C36, C41 pass
+- [x] Quick gate passes; no existing test deleted or weakened
 
 **Tests**: unit
 **Gate**: quick

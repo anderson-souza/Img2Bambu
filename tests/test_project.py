@@ -132,3 +132,118 @@ def test_later_sample_edit_gives_same_masks(tmp_path):
         assert not np.array_equal(before, segment.assign(p.analysis, p.palette))
         assert np.array_equal(segment.assign(p.analysis, p.palette), segment.assign(q.analysis, q.palette))
         same_masks(p, q)
+
+
+def rewrite(path, changes):
+    """Replaces members of a project file; None removes one."""
+    m = members(path)
+    m.update(changes)
+    with zipfile.ZipFile(path, "w") as z:
+        for n, data in m.items():
+            if data is not None:
+                z.writestr(n, data)
+
+
+def edit_json(path, keys, value):
+    d = json.loads(members(path)["project.json"])
+    target = d
+    for k in keys[:-1]:
+        target = target[k]
+    target[keys[-1]] = value
+    rewrite(path, {"project.json": json.dumps(d)})
+
+
+@pytest.fixture
+def saved(tmp_path):
+    path = str(tmp_path / "x.i2b")
+
+    def fresh():
+        project.save(path, make())
+        return path
+    fresh()
+    return fresh
+
+
+INVALID = [
+    (("format",), "1"), (("format",), True), (("format",), 0),
+    (("image_name",), 3), (("name",), None), (("check",), 1), (("presets",), []), (("presets", "machine"), 1),
+    (("params",), []), (("params", "background"), "x"), (("params", "protect_lines"), 1),
+    (("params", "n_colors"), 3.0), (("params", "n_colors"), True), (("params", "width_mm"), "150"),
+    (("params", "width_mm"), float("nan")), (("params", "width_mm"), float("inf")), (("params", "width_mm"), True),
+    (("palette", "colors", 0), [0, 0]), (("palette", "colors", 0), [0, 0, 256]), (("palette", "colors", 0), [0, 0, -1]),
+    (("palette", "colors", 0), [0, 0, 1.5]), (("palette", "samples"), [[0, 0, 0]]), (("palette", "colors"), []),
+    (("palette", "colors"), [[0, 0, 0]] * 9), (("palette", "base_index"), 4), (("palette", "base_index"), -1),
+    (("palette", "base_index"), 3), (("palette", "merges"), [[3, 4]]), (("palette", "merges"), [[3]]),
+    (("palette", "merges"), [[1, 2], [2, 1]]), (("palette", "merges"), [[1, 1]]),
+    (("palette", "merges"), [[3, 2], [3, 1]]), (("palette", "streak"), [4]), (("palette", "streak"), [0]),
+    (("palette", "outline"), [-1]), (("palette", "edited"), ["1"]), (("palette", "edited"), 1),
+    (("detection", "base"), 4), (("detection", "centers"), [[0, 0, 0]]),
+    (("detection", "centers", 0), [0, 0, float("nan")]), (("detection", "samples"), []),
+    (("detection", "offset"), [0]), (("detection", "offset"), [-1, 0]),
+]
+
+
+def test_invalid_values_are_refused(saved):
+    for keys, value in INVALID:
+        path = saved()
+        edit_json(path, keys, value)
+        with pytest.raises(project.ProjectError, match="valor inválido no projeto"):
+            project.load(path, LIMITS)
+            pytest.fail(f"accepted {keys} = {value!r}")
+    for key, bounds in LIMITS.items():
+        for bound, step in zip(bounds, (-1, 1), strict=True):
+            path = saved()
+            edit_json(path, ("params", key), bound)
+            assert getattr(project.load(path, LIMITS).params, key) == bound
+            edit_json(path, ("params", key), bound + step)
+            with pytest.raises(project.ProjectError, match=key):
+                project.load(path, LIMITS)
+
+
+def test_mismatched_detection_is_refused(saved):
+    m = members(saved())
+    labels = np.array(Image.open(io.BytesIO(m["labels.png"])))
+    lab = np.array(Image.open(io.BytesIO(m["lab.png"])))
+    above, empty = labels.copy(), np.zeros_like(labels)
+    above[above == 4] = 5
+    cases = [{"labels.png": png(labels[:-1])}, {"lab.png": png(lab[:, :-1])}, {"labels.png": png(lab)},
+             {"lab.png": png(labels)}, {"labels.png": png(above)}, {"labels.png": png(empty)},
+             {"image": png(synthetic()[:300])}]
+    for changes in cases:
+        path = saved()
+        rewrite(path, changes)
+        with pytest.raises(project.ProjectError, match="detecção de cores não corresponde"):
+            project.load(path, LIMITS)
+    h, w = labels.shape
+    for offset, ok in (([400 - h, 400 - w], True), ([401 - h, 0], False), ([0, 401 - w], False)):
+        path = saved()
+        edit_json(path, ("detection", "offset"), offset)
+        if ok:
+            assert project.load(path, LIMITS).analysis.rgba.shape[:2] == (h, w)
+        else:
+            with pytest.raises(project.ProjectError, match="detecção de cores não corresponde"):
+                project.load(path, LIMITS)
+
+
+def test_load_writes_and_runs_nothing(saved, tmp_path, monkeypatch):
+    path = saved()
+    rewrite(path, {"../fora.txt": b"x", "extra.pkl": b"cos\nsystem\n(S'touch pwned'\ntR."})
+    monkeypatch.chdir(tmp_path)
+    before = sorted(str(f) for f in tmp_path.parent.rglob("*"))
+    edit_json(path, ("name",), "../../etc/x")
+    edit_json(path, ("image_name",), r"C:\fotos\abelha.png")
+    q = project.load(path, LIMITS)
+    assert sorted(str(f) for f in tmp_path.parent.rglob("*")) == before
+    assert q.name == "x" and q.image_name == "abelha.png"
+    assert len(q.notes) == 2 and "../../etc/x" in q.notes[1]
+    eps = b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 400 400\n%%EndComments\nshowpage\n"
+    rewrite(path, {"image": eps})
+    with pytest.raises(project.ProjectError, match="formato de imagem não aceito"):
+        project.load(path, LIMITS)
+
+
+def test_oversized_member_is_refused(saved, monkeypatch):
+    path = saved()
+    monkeypatch.setattr(project, "MAX_MEMBER", len(members(path)["image"]) - 1)
+    with pytest.raises(project.ProjectError, match="grande demais: image"):
+        project.load(path, LIMITS)
