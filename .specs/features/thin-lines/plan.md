@@ -2,7 +2,7 @@
 
 **Approved**: 2026-11-23 - user: "aprovado"
 **Settled mid-build:** none
-**Review:**
+**Review:** sent at b2f3788
 **Fix pass:**
 
 ## Problem
