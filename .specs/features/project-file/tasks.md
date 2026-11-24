@@ -97,9 +97,9 @@ T7 → T8
 
 **Done when**:
 
-- [ ] `load` round-trips every value, without detection
-- [ ] C4, C6 pass
-- [ ] Quick gate passes; no existing test deleted or weakened
+- [x] `load` round-trips every value, without detection
+- [x] C4, C6 pass
+- [x] Quick gate passes; no existing test deleted or weakened
 
 **Tests**: unit
 **Gate**: quick

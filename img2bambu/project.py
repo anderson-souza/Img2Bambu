@@ -1,5 +1,6 @@
 import io
 import json
+import ntpath
 import os
 import secrets
 import zipfile
@@ -10,7 +11,7 @@ import numpy as np
 from PIL import Image
 
 from .params import Palette, Params
-from .segment import Analysis
+from .segment import Analysis, load_image
 
 FORMAT = 1
 SUFFIX = ".i2b"
@@ -110,3 +111,54 @@ def save(path, p: Project):
         with suppress(OSError):
             os.remove(tmp)
         raise
+
+
+def _file_name(value, notes):
+    # why: the name is joined to the output folder, so a received file must not choose another folder
+    name = ntpath.basename(value)            # invariant: handles both separators and drives on every system
+    if name != value:
+        notes.append(f"Nome '{value}' do projeto reduzido a '{name}'.")
+    return name
+
+
+def _setting(d, key, default, notes):
+    if key not in d:
+        notes.append(f"Ajuste '{key}' ausente no projeto: usado o padrão ({default}).")
+        return default
+    return d[key]
+
+
+def _rgbs(rows):
+    return [tuple(c) for c in rows]
+
+
+def load(path, limits):
+    """Reads a project; `limits` = {params field: (min, max)}."""
+    with open(path, "rb") as f, zipfile.ZipFile(f) as z:
+        return _build(json.loads(z.read("project.json")), z.read("image"), z.read("labels.png"),
+                      z.read("lab.png"), limits)
+
+
+def _build(d, image, labels_png, lab_png, limits):
+    notes = []
+    image_name = _file_name(d["image_name"], notes)
+    raw, default = d.get("params", {}), Params()
+    params = Params(**{k: _setting(raw, k, getattr(default, k), notes) for k in PARAM_KEYS})
+    pal, det = d["palette"], d["detection"]
+    palette = Palette(_rgbs(pal["colors"]), pal["base_index"], dict(pal["merges"]), set(pal["streak"]),
+                      set(pal["outline"]), _rgbs(pal["samples"]), set(pal["edited"]))
+    presets = {k: _setting(d.get("presets", {}), k, "", notes) for k in PRESET_KEYS}
+    check = _setting(d, "check", True, notes)
+    name = _file_name(_setting(d, "name", os.path.splitext(image_name)[0], notes), notes)
+
+    labels = np.array(Image.open(io.BytesIO(labels_png), formats=["PNG"])).astype(int) - 1
+    lab = np.array(Image.open(io.BytesIO(lab_png), formats=["PNG"]))
+    sil = labels >= 0
+    check_image(image)
+    rgba = load_image(io.BytesIO(image))
+    y0, x0 = det["offset"]
+    h, w = labels.shape
+    an = Analysis(rgba[y0:y0 + h, x0:x0 + w].copy(), sil, labels, palette, "",
+                  np.array(det["centers"], np.float32), lab[sil].astype(np.float32),
+                  tuple(_rgbs(det["samples"])), (y0, x0), det["base"])
+    return Project(image_name, image, params, palette, an, **presets, check=check, name=name, rgba=rgba, notes=notes)
