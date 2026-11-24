@@ -3,9 +3,10 @@ import os
 import subprocess
 
 import numpy as np
-from PySide6.QtCore import QSettings, Qt, QThreadPool, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QSettings, Qt, QThreadPool, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QImage, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
     QButtonGroup,
     QCheckBox,
     QColorDialog,
@@ -35,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import bambu, pipeline, preview3d, segment
+from ..history import History, Snapshot
 from ..params import Params, hex_color
 from .view3d import View3D
 from .worker import Task
@@ -146,7 +148,7 @@ class ColorRow(QWidget):
         if c.isValid():
             values[self.idx] = (c.red(), c.green(), c.blue())
             self.win.palette.edited.add(self.idx)
-            self.win.palette_changed()
+            self.win.palette_changed(title)
 
 
 class MainWindow(QMainWindow):
@@ -172,6 +174,10 @@ class MainWindow(QMainWindow):
         self.last_project = None
         self.db = None
         self.pick_row = None
+        self.history = History()
+        self.detecting = False
+        self.stale2d = False            # preview asked for while detecting
+        self.undo_msg = None            # result of Ctrl+Z, kept in the status bar until the next change
 
         self.debounce = QTimer(self, singleShot=True, interval=350)
         self.debounce.timeout.connect(self.run_preview)
@@ -203,6 +209,17 @@ class MainWindow(QMainWindow):
         split.addWidget(scroll)
         split.setStretchFactor(0, 3); split.setStretchFactor(1, 2)
         self.setCentralWidget(split)
+        self.fields = {
+            "Nº de cores": self.sp_n, "Filamentos": self.sp_fil, "Suavização": self.sp_smooth,
+            "Detalhe mínimo": self.sp_detail, "Filtro reflexo (raio)": self.sp_streak,
+            "Largura": self.sp_w, "Espessura da base": self.sp_base, "Relevo das cores": self.sp_relief,
+        }
+        for label, sp in self.fields.items():
+            sp.valueChanged.connect(lambda _, label=label: self.record(label, key=label))
+        self.last = self.snapshot()
+        QShortcut(QKeySequence("Ctrl+Z"), self, self.undo)
+        for sp in self.findChildren(QAbstractSpinBox):
+            sp.installEventFilter(self)
         self.statusBar().showMessage("Abra uma imagem para começar.")
         QTimer.singleShot(0, self.load_presets)
 
@@ -218,9 +235,11 @@ class MainWindow(QMainWindow):
         self.cb_bg.addItem("Transparência (PNG com fundo transparente)", "alpha")
         self.cb_bg.addItem("Remover cor de fundo (a partir dos cantos)", "color")
         self.cb_bg.currentIndexChanged.connect(self.reanalyze)
+        self.cb_bg.currentIndexChanged.connect(self.forget_history)
         f.addRow("Fundo:", self.cb_bg)
         self.sp_tol = QSpinBox(); self.sp_tol.setRange(1, 120); self.sp_tol.setValue(self.params.bg_tolerance)
         self.sp_tol.valueChanged.connect(self.reanalyze)
+        self.sp_tol.valueChanged.connect(self.forget_history)
         f.addRow("Tolerância do fundo:", self.sp_tol)
         return g
 
@@ -367,6 +386,7 @@ class MainWindow(QMainWindow):
         self.ed_out.setText(os.path.join(os.path.dirname(path), "img2bambu_saida"))
         self.ed_name.setText(os.path.splitext(os.path.basename(path))[0])
         self.reanalyze()
+        self.forget_history()
 
     def read_params(self):
         p = self.params
@@ -386,6 +406,7 @@ class MainWindow(QMainWindow):
         if self.rgba is None:
             return
         self.req += 1
+        self.detecting = True
         self.status("Detectando cores…")
         t = Task(self.req, segment.analyze, self.rgba, self.read_params())
         t.signals.done.connect(self.analysis_done)
@@ -395,11 +416,13 @@ class MainWindow(QMainWindow):
     def analysis_done(self, tag, an):
         if tag != self.req:
             return
+        self.detecting = False
         keep = None if self.fresh_image else self.palette
         self.analysis, self.palette, self.fresh_image = an, segment.carry_over(keep, an.palette), False
         if an.note:
             self.log_msg(an.note)
         self.apply_auto_merge()
+        self.last = self.snapshot()
         self.build_rows()
         self.run_preview()
 
@@ -445,24 +468,27 @@ class MainWindow(QMainWindow):
 
     def set_base(self, i):
         self.palette.base_index = i
-        self.palette_changed()
+        self.palette_changed("Base")
 
     def set_streak(self, i, on):
         (self.palette.streak.add if on else self.palette.streak.discard)(i)
-        self.palette_changed()
+        self.palette_changed("Filtro reflexo")
 
     def set_merge(self, i):
         target = self.rows[i].merge.currentData()
         if target is None or target < 0:
             self.palette.merges.pop(i, None)
         else:
-            self.palette.merges[i] = target
-            if self.palette.resolve(target) == i:      # why: merging into own descendant would form a cycle
-                self.palette.merges.pop(i)
+            before = self.palette.merges.pop(i, None)
+            if self.palette.resolve(target) != i:
+                self.palette.merges[i] = target
+            else:                                      # why: merging into own descendant would form a cycle
+                if before is not None:
+                    self.palette.merges[i] = before
                 QMessageBox.warning(self, "Mesclar", "Essa combinação criaria um ciclo de mesclagem.")
         if self.palette.resolve(self.palette.base_index) != self.palette.base_index:
             self.palette.base_index = self.palette.resolve(self.palette.base_index)
-        self.palette_changed()
+        self.palette_changed("Mesclagem")
 
     def toggle_pick(self, i):
         if self.pick_row == i:
@@ -517,9 +543,10 @@ class MainWindow(QMainWindow):
         self.palette.samples[i] = rgb
         self.palette.edited.add(i)
         self.disarm()
-        self.palette_changed()
+        self.palette_changed("Cor na imagem")
 
-    def palette_changed(self):
+    def palette_changed(self, label):
+        self.record(label)
         self.refresh_rows()
         self.debounce.start()
 
@@ -532,10 +559,15 @@ class MainWindow(QMainWindow):
     def run_preview(self):
         if self.analysis is None:
             return
-        self.req += 1
-        self.status("Atualizando prévia…")
         h, w = self.analysis.sil.shape
         self.lbl_h.setText(f"{self.sp_w.value() * h / w:.1f} mm")
+        if self.detecting:
+            # why: taking a new tag here would discard the detection, which previews by itself when done
+            self.stale2d = True
+            return
+        self.req += 1
+        self.stale2d = False
+        self.status("Atualizando prévia…")
         t = Task(self.req, pipeline.render, self.analysis, copy.deepcopy(self.palette), self.read_params())
         t.signals.done.connect(self.preview_done)
         t.signals.failed.connect(self.task_failed)
@@ -552,6 +584,7 @@ class MainWindow(QMainWindow):
         self.show_count(out[1])
         # why: a preview from an earlier pick must not hide the hint of the pick still armed
         self.status(self.pick_hint() if self.pick_row is not None
+                    else self.undo_msg if self.undo_msg
                     else "Prévia pronta. Ajuste as cores ou clique em Gerar 3MF.")
 
     def tab_changed(self, i):
@@ -577,6 +610,67 @@ class MainWindow(QMainWindow):
             return
         self.view3d.show_message(msg)
         self.log_msg(f"Erro: {msg}")
+
+    # ---------- undo ----------
+    def eventFilter(self, obj, e):
+        # why: a spin box claims Ctrl+Z for its own text before the window shortcut sees it
+        if e.type() == QEvent.ShortcutOverride and e.matches(QKeySequence.Undo):
+            e.ignore()
+            return True
+        return super().eventFilter(obj, e)
+
+    def snapshot(self):
+        # why: until a new image is detected, palette and analysis still belong to the previous one
+        pal, an = (None, None) if self.fresh_image else (copy.deepcopy(self.palette), self.analysis)
+        return Snapshot([sp.value() for sp in self.fields.values()], pal, an, self.detecting)
+
+    def forget_history(self):
+        self.history.clear()
+        self.last = self.snapshot()
+        self.undo_msg = None
+
+    def record(self, label, key=None):
+        before, self.last = self.last, self.snapshot()
+        self.history.record(label, before, self.last, key)
+        self.undo_msg = None
+
+    def no_effect(self, label, st):
+        # why: a run of a field back to its start still differs by the detection that ran meanwhile
+        now = self.snapshot()
+        return (not now.pending and st.values == now.values
+                and (st.palette == now.palette or (st.pending and label in self.fields)))
+
+    def undo(self):
+        step = self.history.undo()
+        while step is not None and self.no_effect(*step):
+            step = self.history.undo()
+        if step is None:
+            self.undo_msg = "Nada para desfazer."
+            self.status(self.undo_msg)
+            return
+        label, st = step
+        self.undo_msg = f"Desfeito: {label}."
+        for sp, v in zip(self.fields.values(), st.values, strict=True):
+            sp.blockSignals(True); sp.setValue(v); sp.blockSignals(False)
+        self.read_params()
+        self.debounce.stop()
+        self.disarm()
+        self.req += 1                  # why: drops a detection still running with the undone values
+        self.detecting = False
+        if st.palette is None:
+            self.fresh_image = True
+        else:
+            self.palette, self.analysis = st.palette, st.analysis
+            if len(self.rows) == len(self.palette.colors):
+                self.refresh_rows()
+            else:
+                self.build_rows()
+        if st.pending or st.palette is None:
+            self.reanalyze()
+        else:
+            self.run_preview()
+        self.last = self.snapshot()
+        self.status(self.undo_msg)
 
     # ---------- export ----------
     def generate(self):
@@ -638,6 +732,11 @@ class MainWindow(QMainWindow):
         if tag == self.req:
             self.log_msg(f"Erro: {msg}")
             self.status("Erro.")
+            if self.detecting:
+                self.detecting = False
+                self.last = self.snapshot()
+                if self.stale2d:
+                    self.run_preview()
 
     # ---------- misc ----------
     def browse_exe(self):

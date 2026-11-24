@@ -10,6 +10,14 @@
 - **Date**: 2026-10-22
 - **Status**: active
 
+### AD-002
+- **Decision**: Undo stores state snapshots (`History` in `img2bambu/history.py`), not per-control commands; every new control in groups 2 and 3 of the window records the state before its change.
+- **Reason**: re-detection wipes merges, base and streak choices and has no inverse; only a snapshot restores it.
+- **Trade-off**: each re-detection step keeps an `Analysis` in memory (≈100 MB at 2000×2000), so the history holds at most 10 distinct ones and drops the oldest steps beyond that (user, 2026-11-23).
+- **Scope**: GUI (`img2bambu/gui/main_window.py`).
+- **Date**: 2026-11-23
+- **Status**: active
+
 ## Handoff
 
 - **Feature**: `.specs/features/preview-3d/`

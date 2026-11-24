@@ -33,3 +33,4 @@ workdir/
 # Secrets
 .env
 .env.*
+.claude.local.md
