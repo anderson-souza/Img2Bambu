@@ -60,8 +60,12 @@ def main(argv=None):
                 ap.error(f"preset não instalado: {preset}. Informe outro com --{opt}." if preset else
                          f"a impressora '{a.printer}' não tem preset padrão. Informe um com --{opt}.")
         choice = pipeline.BambuChoice(exe, a.printer, proc, fil, a.check)
-    res = pipeline.export(an, an.palette, params, outdir, name, choice, db,
-                          progress=lambda p, m: print(f"[{p:3d}%] {m}"))
+    try:
+        res = pipeline.export(an, an.palette, params, outdir, name, choice, db,
+                              progress=lambda p, m: print(f"[{p:3d}%] {m}"))
+    except RuntimeError as e:
+        print("Erro:", e, file=sys.stderr)
+        return 1
     for s in res.stls:
         print("STL:", s)
     if res.project:
@@ -70,7 +74,9 @@ def main(argv=None):
         print("Verificação:", res.check)
     for w in res.warnings:
         print("Aviso:", w)
-    return 0
+    for e in res.errors:
+        print("Erro:", e, file=sys.stderr)
+    return 1 if res.errors else 0
 
 
 if __name__ == "__main__":

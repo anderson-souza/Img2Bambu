@@ -3,6 +3,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from . import pipeline
+from .bambu import fits
 from .params import Palette, Params
 
 
@@ -32,11 +33,6 @@ def size(meshes):
     lo = np.min([m.lo for m in meshes], axis=0)
     hi = np.max([m.hi for m in meshes], axis=0)
     return tuple(float(v) for v in hi - lo)
-
-
-def fits(sz, bed):
-    x0, y0, x1, y1, h = bed
-    return sz[0] <= x1 - x0 and sz[1] <= y1 - y0 and (h is None or sz[2] <= h)
 
 
 def describe(meshes, bed):

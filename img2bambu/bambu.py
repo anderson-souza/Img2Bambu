@@ -75,6 +75,11 @@ def work_dir():
     return tempfile.mkdtemp(prefix="img2bambu_", dir=root)
 
 
+def fits(sz, bed):
+    x0, y0, x1, y1, h = bed
+    return sz[0] <= x1 - x0 and sz[1] <= y1 - y0 and (h is None or sz[2] <= h)
+
+
 class PresetDB:
     """Instantiable system presets of the installed Bambu Studio (user presets are not loadable by CLI)."""
 
@@ -259,18 +264,29 @@ def patch_project(src, dst, colors, filament_keys=(), tower=None):
 def slice_check(exe, project, workdir=None):
     """Slice with the project's embedded config only; returns summary dict."""
     work = workdir or tempfile.mkdtemp(prefix="img2bambu_slice_")
+    # why: when slicing fails, the CLI does not create the folder and the reason in result.json is lost
+    os.makedirs(work, exist_ok=True)
+    out = {"ok": False, "changes": 0, "colours": [], "time": "", "error": "", "warnings": []}
     res_path = os.path.join(work, "result.json")
     for f in (res_path, os.path.join(work, "plate_1.gcode")):
         if os.path.exists(f):
             os.remove(f)
-    _run(exe, ["--slice", "0", "--outputdir", work, project])
-    if not os.path.isfile(res_path):
-        raise RuntimeError("Fatiamento de verificação falhou (sem result.json).")
-    with open(res_path, encoding="utf-8") as f:
-        r = json.load(f)
-    plate = (r.get("sliced_plates") or [{}])[0]
-    out = {"ok": r.get("return_code") == 0, "changes": plate.get("filament_change_times", 0),
-           "colours": [], "time": ""}
+    try:
+        _run(exe, ["--slice", "0", "--outputdir", work, project])
+        with open(res_path, encoding="utf-8") as f:
+            r = json.load(f)
+    except subprocess.TimeoutExpired:
+        out["error"] = "o Bambu Studio demorou demais para fatiar."
+        return out
+    except (OSError, ValueError) as e:
+        out["error"] = f"o Bambu Studio não informou o resultado ({e})."
+        return out
+    plates = r.get("sliced_plates") or []
+    out["ok"] = r.get("return_code") == 0
+    out["changes"] = (plates or [{}])[0].get("filament_change_times", 0)
+    if not out["ok"]:
+        out["error"] = (r.get("error_string") or f"código {r.get('return_code')}").strip()
+    out["warnings"] = [p["warning_message"].strip() for p in plates if p.get("warning_message")]
     gcode = os.path.join(work, "plate_1.gcode")
     if os.path.isfile(gcode):
         with open(gcode, encoding="utf-8", errors="ignore") as f:

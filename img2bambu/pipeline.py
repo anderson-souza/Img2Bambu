@@ -2,6 +2,7 @@ import os
 import shutil
 from dataclasses import dataclass, field
 
+import numpy as np
 from PIL import Image
 
 from . import bambu, export3mf, geometry, segment, tower
@@ -24,6 +25,7 @@ class Result:
     preview: str = ""
     check: dict = field(default_factory=dict)
     warnings: list = field(default_factory=list)
+    errors: list = field(default_factory=list)
 
 
 def render(an, palette: Palette, params: Params):
@@ -84,6 +86,11 @@ def _place_tower(parts, choice, db, res):
 
 
 def _export_bambu(parts, colors, outdir, basename, choice, db, work, res, progress):
+    bed = db.bed(choice.machine)
+    bounds = np.array([p.mesh.bounds for p in parts])
+    size = np.round(bounds[:, 1].max(axis=0) - bounds[:, 0].min(axis=0), 3)
+    if bed and not bambu.fits(size, bed):
+        res.errors.append(f"Modelo maior que a mesa: {' × '.join(f'{v:.1f}' for v in size)} mm.")
     minimal = os.path.join(work, "minimal.3mf")
     export3mf.write_minimal_3mf(parts, minimal, basename, db.bed_center(choice.machine))
     progress(65, "Criando projeto no Bambu Studio…")
@@ -93,5 +100,8 @@ def _export_bambu(parts, colors, outdir, basename, choice, db, work, res, progre
     if choice.check:
         progress(80, "Verificando (fatiando)…")
         res.check = bambu.slice_check(choice.exe, res.project, workdir=os.path.join(work, "slice"))
-        if len(parts) > 1 and not res.check.get("changes"):
-            res.warnings.append("Verificação: fatiamento sem trocas de filamento.")
+        res.warnings += [f"Verificação: {w}" for w in res.check["warnings"]]
+        if not res.check["ok"]:
+            res.errors.append(f"Verificação: o fatiamento falhou: {res.check['error']}")
+        elif len(parts) > 1 and not res.check["changes"]:
+            res.errors.append("Verificação: fatiamento sem trocas de filamento.")

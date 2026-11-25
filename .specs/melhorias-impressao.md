@@ -11,7 +11,7 @@ Estados: `aberto` → `refinado` (pontos decididos) → `feito` (link do PR). Ao
 |---|---|---|---|---|
 | 1 | Presets completos no 3MF | P0 | medido | refinado (implementado, sem PR; falta UAT na GUI) |
 | 2 | Posição da prime tower | P0 | medido | refinado (implementado, sem PR) |
-| 3 | `--check` que não esconde falhas | P0 | medido + código | aberto |
+| 3 | `--check` que não esconde falhas | P0 | medido + código | refinado (implementado, sem PR) |
 | 4 | Alturas múltiplas da camada | P1 | medido | aberto |
 | 5 | Conferência pelo gcode | P1 | proposta | aberto |
 | 6 | Limites pelo bico real | P1 | código | aberto |
@@ -100,6 +100,10 @@ oferecer a opção ao usuário. As dimensões reais da torre (com brim) precisam
 **Onde mexe:** `bambu.patch_project`, `pipeline._export_bambu`.
 
 ### 3. `--check` que não esconde falhas
+
+**Resolvido (2026-11-24):** o `result.json` sumia porque a pasta `slice` não existia. Falha do fatiamento, nenhuma
+troca ou peça maior que a mesa: o projeto é gravado, o motivo aparece, a CLI sai com 1 e a GUI só avisa (decisão do
+usuário). O `--check` da CLI continua opcional. A H2D agora mostra o motivo genérico do CLI (-100); causa em aberto (item 10).
 
 **Diagnóstico:**
 - `slice_check` descarta `error_string` e `warning_message` do `result.json`.
