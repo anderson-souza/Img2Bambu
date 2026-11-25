@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from PIL import Image
 
-from .params import Palette, Params
+from .params import LIMITS, Palette, Params
 from .segment import Analysis, load_image
 
 FORMAT = 1
@@ -160,12 +160,12 @@ def _setting(d, key, default, notes):
     return _typed(d[key], type(default), key)
 
 
-def _param(d, key, notes, limits):
+def _param(d, key, notes):
     value = _setting(d, key, getattr(Params(), key), notes)
     if key == "background" and value not in ("alpha", "color"):
         raise _bad(key)
-    if key in limits:
-        _number(value, type(getattr(Params(), key)), *limits[key], key)
+    if key in LIMITS:
+        _number(value, type(getattr(Params(), key)), *LIMITS[key], key)
     return value
 
 
@@ -177,8 +177,8 @@ def _labels(value, n, what):
     return {_number(v, int, 0, n - 1, what) for v in _list(value, what)}
 
 
-def _palette(d, limits):
-    lo, hi = limits["n_colors"]
+def _palette(d):
+    lo, hi = LIMITS["n_colors"]
     n = len(_list(d["colors"], "colors"))
     _number(n, int, lo, hi, "colors")
     merges = {}
@@ -210,15 +210,15 @@ def _member(z, name):
     return z.read(name)
 
 
-def load(path, limits):
-    """Reads a project; `limits` = {params field: (min, max)}. ProjectError or OSError leaves nothing changed."""
+def load(path):
+    """Reads a project. ProjectError or OSError leaves nothing changed."""
     with open(path, "rb") as f:
         try:
             with zipfile.ZipFile(f) as z:
                 d = _typed(json.loads(_member(z, "project.json")), dict, "project.json")
                 if _number(d["format"], int, 1, float("inf"), "format") > FORMAT:
                     raise ProjectError("Este projeto foi salvo por uma versão mais nova do Img2Bambu.")
-                return _build(d, *(_member(z, n) for n in ("image", "labels.png", "lab.png")), limits)
+                return _build(d, *(_member(z, n) for n in ("image", "labels.png", "lab.png")))
         except ProjectError:
             raise
         except KeyError as e:
@@ -241,13 +241,13 @@ def _detection_images(labels_png, lab_png, n, offset, image_size):
     return labels, lab
 
 
-def _build(d, image, labels_png, lab_png, limits):
+def _build(d, image, labels_png, lab_png):
     notes = []
     image_name = _file_name(_typed(d["image_name"], str, "image_name"), notes)
     raw = _typed(d.get("params", {}), dict, "params")
-    params = Params(**{k: _param(raw, k, notes, limits) for k in PARAM_KEYS})
+    params = Params(**{k: _param(raw, k, notes) for k in PARAM_KEYS})
     det = _typed(d["detection"], dict, "detection")
-    palette = _palette(_typed(d["palette"], dict, "palette"), limits)
+    palette = _palette(_typed(d["palette"], dict, "palette"))
     n = len(palette.colors)
     raw = _typed(d.get("presets", {}), dict, "presets")
     presets = {k: _setting(raw, k, "", notes) for k in PRESET_KEYS}

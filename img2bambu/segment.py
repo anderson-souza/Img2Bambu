@@ -221,7 +221,7 @@ def carry_over(old, new):
         new.colors[nj], new.samples[nj] = old.colors[edited[oi]], old.samples[edited[oi]]
         new.edited.add(nj)
         if edited[oi] in old.outline:
-            new.outline.add(nj); new.streak.discard(nj)
+            new.set_outline(nj, True)
     return new
 
 

@@ -80,7 +80,7 @@ def test_failed_save_keeps_old_file(tmp_path, monkeypatch):
 def reload(tmp_path, p):
     path = str(tmp_path / "x.i2b")
     project.save(path, p)
-    return project.load(path, LIMITS)
+    return project.load(path)
 
 
 def same_masks(a, b):
@@ -223,25 +223,25 @@ def test_invalid_values_are_refused(saved):
         path = saved()
         edit_json(path, keys, value)
         with pytest.raises(project.ProjectError, match="valor inválido no projeto"):
-            project.load(path, LIMITS)
+            project.load(path)
             pytest.fail(f"accepted {keys} = {value!r}")
     for part in ("palette", "detection"):
         for v in (0, 255):
             path = saved()
             edit_json(path, (part, "samples", 0), [v, v, v])
-            q = project.load(path, LIMITS)
+            q = project.load(path)
             assert (q.palette if part == "palette" else q.analysis).samples[0] == (v, v, v)
     path = saved()
     edit_json(path, ("palette", "colors", 0), [255, 255, 255])
-    assert project.load(path, LIMITS).palette.colors[0] == (255, 255, 255)
+    assert project.load(path).palette.colors[0] == (255, 255, 255)
     for key, bounds in LIMITS.items():
         for bound, step in zip(bounds, (-1, 1), strict=True):
             path = saved()
             edit_json(path, ("params", key), bound)
-            assert getattr(project.load(path, LIMITS).params, key) == bound
+            assert getattr(project.load(path).params, key) == bound
             edit_json(path, ("params", key), bound + step)
             with pytest.raises(project.ProjectError, match=key):
-                project.load(path, LIMITS)
+                project.load(path)
 
 
 def test_mismatched_detection_is_refused(saved):
@@ -257,16 +257,16 @@ def test_mismatched_detection_is_refused(saved):
         path = saved()
         rewrite(path, changes)
         with pytest.raises(project.ProjectError, match="detecção de cores não corresponde"):
-            project.load(path, LIMITS)
+            project.load(path)
     h, w = labels.shape
     for offset, ok in (([400 - h, 400 - w], True), ([401 - h, 0], False), ([0, 401 - w], False)):
         path = saved()
         edit_json(path, ("detection", "offset"), offset)
         if ok:
-            assert project.load(path, LIMITS).analysis.rgba.shape[:2] == (h, w)
+            assert project.load(path).analysis.rgba.shape[:2] == (h, w)
         else:
             with pytest.raises(project.ProjectError, match="detecção de cores não corresponde"):
-                project.load(path, LIMITS)
+                project.load(path)
 
 
 def test_load_writes_and_runs_nothing(saved, tmp_path, monkeypatch):
@@ -276,18 +276,18 @@ def test_load_writes_and_runs_nothing(saved, tmp_path, monkeypatch):
     before = sorted(str(f) for f in tmp_path.parent.rglob("*"))
     edit_json(path, ("name",), "../../etc/x")
     edit_json(path, ("image_name",), r"C:\fotos\abelha.png")
-    q = project.load(path, LIMITS)
+    q = project.load(path)
     assert sorted(str(f) for f in tmp_path.parent.rglob("*")) == before
     assert q.name == "x" and q.image_name == "abelha.png"
     assert len(q.notes) == 2 and "../../etc/x" in q.notes[1]
     eps = b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 400 400\n%%EndComments\nshowpage\n"
     rewrite(path, {"image": eps})
     with pytest.raises(project.ProjectError, match="formato de imagem não aceito"):
-        project.load(path, LIMITS)
+        project.load(path)
 
 
 def test_oversized_member_is_refused(saved, monkeypatch):
     path = saved()
     monkeypatch.setattr(project, "MAX_MEMBER", len(members(path)["image"]) - 1)
     with pytest.raises(project.ProjectError, match="grande demais: image"):
-        project.load(path, LIMITS)
+        project.load(path)
