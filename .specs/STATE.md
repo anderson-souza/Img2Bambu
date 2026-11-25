@@ -18,6 +18,14 @@
 - **Date**: 2026-11-23
 - **Status**: active
 
+### AD-003
+- **Decision**: Project files (`.i2b`, `img2bambu/project.py`) are a ZIP with JSON, the original image and the detection result as PNGs; every new control of groups 1 to 5 is saved there, with a default for older files, except the output folder and the executable.
+- **Reason**: the user asked for identical colors on reopening and a file to hand to others; no pickle, because received files are untrusted.
+- **Trade-off**: a change to `Analysis` must keep reading format 1.
+- **Scope**: `img2bambu/project.py`, GUI (`img2bambu/gui/main_window.py`).
+- **Date**: 2026-11-23
+- **Status**: active
+
 ## Handoff
 
 - **Feature**: `.specs/features/preview-3d/`
