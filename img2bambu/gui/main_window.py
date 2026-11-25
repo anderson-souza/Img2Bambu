@@ -4,8 +4,8 @@ import os
 import subprocess
 
 import numpy as np
-from PySide6.QtCore import QEvent, QSettings, Qt, QThreadPool, QTimer, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QImage, QKeySequence, QPainter, QPixmap, QShortcut
+from PySide6.QtCore import QEvent, QSettings, Qt, QThreadPool, QTimer, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QButtonGroup,
@@ -15,9 +15,6 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
-    QGraphicsPixmapItem,
-    QGraphicsScene,
-    QGraphicsView,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -27,7 +24,6 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QProgressBar,
     QPushButton,
-    QRadioButton,
     QScrollArea,
     QSpinBox,
     QSplitter,
@@ -38,7 +34,9 @@ from PySide6.QtWidgets import (
 
 from .. import bambu, pipeline, preview3d, project, segment
 from ..history import History, Snapshot
-from ..params import LIMITS, Params, hex_color
+from ..params import LIMITS, Params
+from .color_row import ColorRow
+from .image_view import ImageView
 from .view3d import View3D
 from .worker import Task
 
@@ -47,118 +45,6 @@ TITLE = "Img2Bambu — imagem para 3MF multicor"
 DEFAULT_MACHINE = "Bambu Lab A1 0.4 nozzle"
 PRESETS = "Impressora", "Processo", "Filamento"
 IMG_FILTER = "Imagens (*.png *.jpg *.jpeg *.webp *.bmp)"
-
-
-def to_pixmap(arr):
-    arr = np.ascontiguousarray(arr)
-    h, w = arr.shape[:2]
-    fmt = QImage.Format_RGBA8888 if arr.shape[2] == 4 else QImage.Format_RGB888
-    return QPixmap.fromImage(QImage(arr.data, w, h, arr.strides[0], fmt).copy())
-
-
-class ImageView(QGraphicsView):
-    picked = Signal(int, int)       # (y, x) pixel of the shown image
-
-    def __init__(self):
-        super().__init__()
-        self.setScene(QGraphicsScene(self))
-        self.item = QGraphicsPixmapItem()
-        self.scene().addItem(self.item)
-        self.setRenderHint(QPainter.SmoothPixmapTransform)
-        self.setDragMode(QGraphicsView.ScrollHandDrag)
-        self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
-        self.setBackgroundBrush(QColor("#d0d0d0"))
-        self._fitted = False
-        self.picking = False
-
-    def set_picking(self, on):
-        self.picking = on
-        self.setDragMode(QGraphicsView.NoDrag if on else QGraphicsView.ScrollHandDrag)
-        if on:
-            self.viewport().setCursor(Qt.CrossCursor)
-        else:
-            self.viewport().unsetCursor()
-
-    def mousePressEvent(self, e):
-        if self.picking and e.button() == Qt.LeftButton:
-            p = self.mapToScene(e.position().toPoint())
-            self.picked.emit(int(np.floor(p.y())), int(np.floor(p.x())))
-            e.accept()
-            return
-        super().mousePressEvent(e)
-
-    def set_image(self, arr, refit=False):
-        self.item.setPixmap(to_pixmap(arr))
-        self.scene().setSceneRect(self.item.boundingRect())
-        if refit or not self._fitted:
-            self.fitInView(self.item, Qt.KeepAspectRatio)
-            self._fitted = True
-
-    def wheelEvent(self, e):
-        f = 1.2 if e.angleDelta().y() > 0 else 1 / 1.2
-        self.scale(f, f)
-
-    def mouseDoubleClickEvent(self, e):
-        self.fitInView(self.item, Qt.KeepAspectRatio)
-
-
-class ColorRow(QWidget):
-    def __init__(self, win, idx):
-        super().__init__()
-        self.win, self.idx = win, idx
-        lay = QHBoxLayout(self); lay.setContentsMargins(0, 0, 0, 0)
-        self.sample = QPushButton(); self.sample.setFixedSize(42, 24)
-        self.sample.setToolTip("Cor na imagem: define quais pixels vão para esta cor (clique para alterar)")
-        self.sample.clicked.connect(lambda: self.pick("samples", "Cor na imagem"))
-        self.drop = QPushButton("💧"); self.drop.setFixedSize(28, 24); self.drop.setCheckable(True)
-        self.drop.setToolTip("Conta-gotas: clique e depois clique na imagem (Original ou Prévia) "
-                             "para definir a cor na imagem (Esc cancela)")
-        self.drop.clicked.connect(lambda: self.win.toggle_pick(self.idx))
-        self.swatch = QPushButton(); self.swatch.setFixedSize(42, 24)
-        self.swatch.setToolTip("Cor do filamento (clique para alterar)")
-        self.swatch.clicked.connect(lambda: self.pick("colors", "Cor do filamento"))
-        self.base = QRadioButton("Base")
-        self.base.setToolTip("Cor da base de trás (silhueta inteira)")
-        self.streak = QCheckBox("Filtro reflexo")
-        self.streak.setToolTip("Remove listras finas desta cor (reflexos de brilho)")
-        self.outline = QCheckBox("Contorno")
-        self.outline.setToolTip("Mantém os traços finos desta cor, com largura imprimível (mínimo 0,42 mm)")
-        self.merge = QComboBox(); self.merge.setToolTip("Mesclar esta cor em outra")
-        self.pct = QLabel()
-        for w in (self.drop, self.sample, QLabel("→"), self.swatch, self.base, self.streak, self.outline,
-                  self.merge, self.pct):
-            lay.addWidget(w)
-        lay.addStretch()
-
-    def refresh(self):
-        pal = self.win.palette
-        c = pal.colors[self.idx]
-        self.swatch.setStyleSheet(f"background:{hex_color(c)}; border:1px solid #555;")
-        self.swatch.setText("")
-        self.sample.setStyleSheet(f"background:{hex_color(pal.samples[self.idx])}; border:1px solid #555;")
-        self.base.setChecked(pal.base_index == self.idx)
-        self.streak.blockSignals(True); self.streak.setChecked(self.idx in pal.streak); self.streak.blockSignals(False)
-        self.outline.blockSignals(True); self.outline.setChecked(self.idx in pal.outline)
-        self.outline.blockSignals(False)
-        self.merge.blockSignals(True)
-        self.merge.clear(); self.merge.addItem("—", -1)
-        for j, cj in enumerate(pal.colors):
-            if j != self.idx:
-                self.merge.addItem(f"→ {hex_color(cj)}", j)
-        target = pal.merges.get(self.idx, -1)
-        self.merge.setCurrentIndex(max(0, self.merge.findData(target)))
-        self.merge.blockSignals(False)
-        merged = pal.resolve(self.idx) != self.idx
-        for w in (self.base, self.streak, self.outline):
-            w.setEnabled(not merged)
-
-    def pick(self, field, title):
-        values = getattr(self.win.palette, field)
-        c = QColorDialog.getColor(QColor(*values[self.idx]), self, title)
-        if c.isValid():
-            values[self.idx] = (c.red(), c.green(), c.blue())
-            self.win.palette.edited.add(self.idx)
-            self.win.palette_changed(title)
 
 
 class MainWindow(QMainWindow):
@@ -428,7 +314,7 @@ class MainWindow(QMainWindow):
         self.disarm()
         self.lbl_file.setText(os.path.basename(path))
         self.view_orig.set_image(self.rgba, refit=True)
-        self.view_prev._fitted = False
+        self.view_prev.fitted = False
         self.reframe3d = True
         self.ed_out.setText(os.path.join(os.path.dirname(path), "img2bambu_saida"))
         self.ed_name.setText(os.path.splitext(os.path.basename(path))[0])
@@ -492,8 +378,11 @@ class MainWindow(QMainWindow):
             r.setParent(None)
         self.rows = []
         for i in range(len(self.palette.colors)):
-            r = ColorRow(self, i)
+            r = ColorRow(i)
             self.base_group.addButton(r.base, i)
+            r.sample.clicked.connect(lambda _, i=i: self.pick_color(i, "samples", "Cor na imagem"))
+            r.drop.clicked.connect(lambda _, i=i: self.toggle_pick(i))
+            r.swatch.clicked.connect(lambda _, i=i: self.pick_color(i, "colors", "Cor do filamento"))
             r.streak.toggled.connect(lambda on, i=i: self.set_streak(i, on))
             r.outline.toggled.connect(lambda on, i=i: self.set_outline(i, on))
             r.merge.currentIndexChanged.connect(lambda _, i=i: self.set_merge(i))
@@ -507,7 +396,7 @@ class MainWindow(QMainWindow):
         tot = max(1, int((lab >= 0).sum()))
         counts = np.bincount(lab[lab >= 0], minlength=len(pal.colors))
         for r in self.rows:
-            r.refresh()
+            r.refresh(pal)
             r.pct.setText(f"{100 * counts[r.idx] / tot:.0f}%")
 
     def show_count(self, masks):
@@ -533,6 +422,14 @@ class MainWindow(QMainWindow):
         if not self.palette.merge(i, None if target is None or target < 0 else target):
             QMessageBox.warning(self, "Mesclar", "Essa combinação criaria um ciclo de mesclagem.")
         self.palette_changed("Mesclagem")
+
+    def pick_color(self, i, field, title):
+        values = getattr(self.palette, field)
+        c = QColorDialog.getColor(QColor(*values[i]), self, title)
+        if c.isValid():
+            values[i] = (c.red(), c.green(), c.blue())
+            self.palette.edited.add(i)
+            self.palette_changed(title)
 
     def toggle_pick(self, i):
         if self.pick_row == i:
@@ -843,7 +740,7 @@ class MainWindow(QMainWindow):
         self.palette, self.analysis = p.palette, p.analysis
         self.lbl_file.setText(p.image_name)
         self.view_orig.set_image(self.rgba, refit=True)
-        self.view_prev._fitted = False
+        self.view_prev.fitted = False
         self.read_params()
         self.build_rows()
         self.project_path = path
