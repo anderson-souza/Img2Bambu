@@ -3,7 +3,12 @@ import os
 import sys
 
 from . import bambu, pipeline, segment
-from .params import Params, hex_color
+from .params import LIMITS, Params, hex_color
+
+
+def _choices(key):
+    lo, hi = LIMITS[key]
+    return {"choices": range(lo, hi + 1), "metavar": f"{lo}-{hi}"}
 
 
 def main(argv=None):
@@ -13,10 +18,10 @@ def main(argv=None):
     ap.add_argument("--width", type=float, default=150.0)
     ap.add_argument("--base", type=float, default=10.0)
     ap.add_argument("--relief", type=float, default=1.0)
-    ap.add_argument("--colors", type=int, default=3)
-    ap.add_argument("--smooth", type=int, default=0, choices=range(6), metavar="0-5",
+    ap.add_argument("--colors", type=int, default=3, **_choices("n_colors"))
+    ap.add_argument("--smooth", type=int, default=0, **_choices("smooth"),
                     help="suavização (mean-shift) antes de detectar as cores; 0 = desligado")
-    ap.add_argument("--filaments", type=int, default=0, choices=range(9), metavar="0-8",
+    ap.add_argument("--filaments", type=int, default=0, **_choices("filaments"),
                     help="mesclar as cores mais parecidas até sobrar esse número; 0 = desligado")
     ap.add_argument("--printer", default="Bambu Lab A1 0.4 nozzle")
     ap.add_argument("--process", default=None)
@@ -48,7 +53,13 @@ def main(argv=None):
             print("Presets do Bambu Studio não encontrados: só STLs serão gerados. Abra o Bambu Studio uma vez.")
     if db and db.ok:
         proc, fil = db.defaults(a.printer)
-        choice = pipeline.BambuChoice(exe, a.printer, a.process or proc, a.filament or fil, a.check)
+        proc, fil = a.process or proc, a.filament or fil
+        for opt, kind, preset in (("printer", "machine", a.printer), ("process", "process", proc),
+                                  ("filament", "filament", fil)):
+            if preset not in db.raw[kind]:
+                ap.error(f"preset não instalado: {preset}. Informe outro com --{opt}." if preset else
+                         f"a impressora '{a.printer}' não tem preset padrão. Informe um com --{opt}.")
+        choice = pipeline.BambuChoice(exe, a.printer, proc, fil, a.check)
     res = pipeline.export(an, an.palette, params, outdir, name, choice, db,
                           progress=lambda p, m: print(f"[{p:3d}%] {m}"))
     for s in res.stls:
