@@ -390,12 +390,8 @@ def test_export_uses_filament_not_sample(tmp_path, monkeypatch):
     pal.colors[sage] = (255, 255, 255)
     seen = {}
     monkeypatch.setattr(bambu, "export_project", lambda *a, **k: seen.setdefault("colors", a[7]))
-
-    class DB:
-        def bed_center(self, m):
-            return (128.0, 128.0)
     choice = pipeline.BambuChoice("bambu-studio", "M", "P", "F")
-    res = pipeline.export(an, pal, p, str(tmp_path), "t", choice, DB())
+    res = pipeline.export(an, pal, p, str(tmp_path), "t", choice, bambu.PresetDB(root=str(tmp_path / "none")))
     expected = [bambu_hex(pal.colors[i]) for i in [pal.base_index] + [i for i in range(3) if i != pal.base_index]]
     assert sorted(seen["colors"]) == sorted(expected)
     assert "#FFFFFF" in seen["colors"] and bambu_hex(PATCH) not in seen["colors"]

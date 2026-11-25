@@ -10,7 +10,7 @@ Estados: `aberto` → `refinado` (pontos decididos) → `feito` (link do PR). Ao
 | # | Item | Prioridade | Evidência | Estado |
 |---|---|---|---|---|
 | 1 | Presets completos no 3MF | P0 | medido | refinado (implementado, sem PR; falta UAT na GUI) |
-| 2 | Posição da prime tower | P0 | medido | aberto |
+| 2 | Posição da prime tower | P0 | medido | refinado (implementado, sem PR) |
 | 3 | `--check` que não esconde falhas | P0 | medido + código | aberto |
 | 4 | Alturas múltiplas da camada | P1 | medido | aberto |
 | 5 | Conferência pelo gcode | P1 | proposta | aberto |
@@ -85,10 +85,11 @@ atuais não pegaram o defeito.
 G-code outside of the printable area" (código -104). Peça de 100 mm: (15, 200), (25, 190) e (210, 20) passam;
 com a torre desligada também (54 min contra 1h03). Com 240 mm de largura: "G-code conflicts detected".
 
-**Reavaliar (2026-11-24):** com `include` resolvido, a A1 fatia com a torre em (15, 220): abelha com largura de 100, 150 e
-240 mm e imagem sintética de 60 mm, sem erro. A falha acima parece ter vindo do gcode incompleto do protótipo; repetir com
-a imagem original. A A1 mini falha ("outside of the printable area") com 60 mm. H2D e X2D falham ao fatiar com e
-sem a correção do item 1 (item 10).
+**Resolvido (2026-11-24):** a torre é quase quadrada e cresce com o número de cores e com camadas finas (camada 0,2,
+com brim: 2 cores ≈ 30 mm, 3 ≈ 37, 4 ≈ 44, 6 ≈ 55; 8 ≈ 64, na H2S). Na A1, em y = 220, cabe com 3 cores e não com 4;
+na A1 mini nunca cabe. `tower.place` mantém a posição padrão se estiver livre, senão escolhe a livre mais próxima
+(contorno real da peça, `bed_exclude_area`). Sem espaço: só avisa (decisão do usuário). Fatiado: A1, A1 mini, P1S, X1C
+e H2S; a H2D e a X2D seguem falhando ao fatiar (item 10).
 
 **O quê:** escolher um canto livre a partir da mesa, do tamanho da peça, da largura da torre e da margem;
 avisar quando não couber.
@@ -226,7 +227,7 @@ do item 1 (hoje a densidade é 0). **A decidir:** exibir custo (`filament_cost`)
 
 ## Ordem sugerida
 
-1. **PR 1:** 1 + 2 + 3 (a dependência do 1 com o 2 foi reavaliada: ver item 2).
+1. **PR 1:** 1 + 2 + 3 (juntos: só o 1 faz o `--check` falhar na A1 com 4 cores e na A1 mini).
 2. **PR 2:** 4 + 7.
 3. **PR 3:** 5.
 4. Depois 8, 11, 6; os demais conforme a necessidade.

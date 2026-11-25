@@ -47,7 +47,7 @@ Pipeline (`pipeline.export`) — same path for CLI (`__main__.py`) and GUI:
 3. `geometry.build_parts` — `contours.trace` (all masks together; pixel-edge boundaries, each shared stretch smoothed once, corners ≥ 45° kept, pixel fallback on crossings) → shapely polygons (mm, Y up) → `trimesh` extrusions. Base at z=0..base_mm, colors at base_mm..+relief_mm. Raises if any mesh not watertight.
    - invariant: neighbours share the same line; never smooth or simplify one color's polygon on its own (it opens gaps or overlaps).
 4. `export3mf` — write per-color STLs always; if Bambu Studio found, write a *minimal* 3MF (one object, components = parts, extruder metadata per part) as CLI input.
-5. `bambu.export_project` — run Bambu Studio CLI (`--load-settings machine;process`, `--load-filaments` ×N, `--export-3mf`), then `patch_project` fixes the result. Optional `slice_check` slices the project to verify filament changes.
+5. `bambu.export_project` — run Bambu Studio CLI (`--load-settings machine;process`, `--load-filaments` ×N, `--export-3mf`), then `patch_project` fixes the result, including the prime tower position chosen by `tower.place` (default kept when free; no room = warning only). Optional `slice_check` slices the project to verify filament changes.
 
 On Linux, `pipeline.export` first asks the Flatpak sandbox whether it can read the output folder (`bambu.sandbox_sees`) and raises before writing anything.
 

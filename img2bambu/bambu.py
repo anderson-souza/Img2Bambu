@@ -187,6 +187,13 @@ class PresetDB:
             height = None
         return (*area, height)
 
+    def bed_exclude(self, machine):
+        try:
+            return [tuple(float(v) for v in a.split("x"))
+                    for a in self.resolve("machine", machine).get("bed_exclude_area") or []]
+        except (ValueError, AttributeError):
+            return []
+
     def bed_center(self, machine):
         b = self.bed(machine)
         if b is None:
@@ -200,7 +207,8 @@ def _run(exe, args, timeout=900):
     return subprocess.run([exe] + args, capture_output=True, timeout=timeout, creationflags=flags)
 
 
-def export_project(exe, db, minimal_3mf, out_path, machine, process, filament, colors, workdir=None):
+def export_project(exe, db, minimal_3mf, out_path, machine, process, filament, colors, tower=None,
+                   workdir=None):
     n = len(colors)
     work = workdir or tempfile.mkdtemp(prefix="img2bambu_")
     raw = os.path.join(work, "cli_export.3mf")
@@ -214,11 +222,11 @@ def export_project(exe, db, minimal_3mf, out_path, machine, process, filament, c
     if not os.path.isfile(raw):
         raise RuntimeError("Bambu Studio CLI não gerou o projeto 3MF.")
     filament_keys = set(db.resolve("filament", filament))
-    patch_project(raw, out_path, colors, filament_keys)
+    patch_project(raw, out_path, colors, filament_keys, tower)
     return out_path
 
 
-def patch_project(src, dst, colors, filament_keys=()):
+def patch_project(src, dst, colors, filament_keys=(), tower=None):
     """CLI export leaves per-filament arrays at length 1; GUI then rejects the config. Expand to N."""
     n = len(colors)
     with zipfile.ZipFile(src) as zin:
@@ -232,6 +240,8 @@ def patch_project(src, dst, colors, filament_keys=()):
         d["filament_colour"] = list(colors)
         if "filament_multi_colour" in d:
             d["filament_multi_colour"] = list(colors)
+        if tower:
+            d["wipe_tower_x"], d["wipe_tower_y"] = [str(tower[0])], [str(tower[1])]
         # invariant: flush matrix is n*n with zero diagonal, vector is 2*n
         d["flush_volumes_matrix"] = ["0" if r == c else FLUSH_DEFAULT for r in range(n) for c in range(n)]
         d["flush_volumes_vector"] = [FLUSH_VECTOR_DEFAULT] * (2 * n)

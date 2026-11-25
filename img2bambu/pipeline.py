@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 from PIL import Image
 
-from . import bambu, export3mf, geometry, segment
+from . import bambu, export3mf, geometry, segment, tower
 from .params import Palette, Params, hex_color
 
 
@@ -69,13 +69,27 @@ def export(an, palette: Palette, params: Params, outdir, basename, choice: Bambu
     return res
 
 
+def _place_tower(parts, choice, db, res):
+    proc = db.resolve("process", choice.process)
+    bed = db.bed(choice.machine)
+    if len(parts) < 2 or bed is None or str(proc.get("enable_prime_tower")) != "1":
+        return None
+    size = tower.side(len(parts), float(proc["layer_height"]), float(proc.get("prime_volume", 45)))
+    pos = tower.place(bed, db.bed_exclude(choice.machine),
+                      tower.footprint(parts[0].mesh, db.bed_center(choice.machine)), size)
+    if pos is None:
+        res.warnings.append(f"Sem espaço na mesa para a torre de purga (cerca de {size + 2 * tower.BRIM:.0f} mm de "
+                            "lado): o fatiamento pode falhar. Reduza a peça ou mova a torre no Bambu Studio.")
+    return pos
+
+
 def _export_bambu(parts, colors, outdir, basename, choice, db, work, res, progress):
     minimal = os.path.join(work, "minimal.3mf")
     export3mf.write_minimal_3mf(parts, minimal, basename, db.bed_center(choice.machine))
     progress(65, "Criando projeto no Bambu Studio…")
     res.project = os.path.join(outdir, f"{basename}.3mf")
     bambu.export_project(choice.exe, db, minimal, res.project, choice.machine, choice.process,
-                         choice.filament, colors, workdir=work)
+                         choice.filament, colors, _place_tower(parts, choice, db, res), workdir=work)
     if choice.check:
         progress(80, "Verificando (fatiando)…")
         res.check = bambu.slice_check(choice.exe, res.project, workdir=os.path.join(work, "slice"))
