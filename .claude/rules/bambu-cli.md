@@ -10,6 +10,8 @@ paths:
 
 - CLI exit code is unreliable (often crashes with 0xC0000005 after success); success is judged by checking output files exist.
 - CLI-exported 3MF leaves per-filament config arrays at length 1, which the GUI rejects as "invalid config". `patch_project` expands them to N, sets `filament_colour`, and rebuilds `flush_volumes_matrix` (N×N, zero diagonal) and `flush_volumes_vector` (2N).
+- The CLI resolves neither `inherits` nor `include` of a preset: unresolved keys silently become generic slicer defaults. Pass `PresetDB.write_flat` copies, never the system files. `include` is not optional: the A1 start and filament-change gcode live there (precedence: inherited < include < own).
+- The CLI caps `machine_max_acceleration_*` from its own `cli_config.json`, and keeps one value per filament of the `filament_dev_*drying*` arrays (AMS drying info). Both are expected differences from the preset.
 - Minimal 3MF must NOT include `Application` metadata — CLI crashes if the file claims to be a Bambu project without `project_settings`.
 - More than 4 parts triggers a warning (exceeds one AMS).
 - Flatpak has a private `/tmp`: work files go to `~/.cache/img2bambu` (`work_dir`) and are removed after export. Do not switch back to plain `tempfile`.

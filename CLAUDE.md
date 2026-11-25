@@ -53,7 +53,7 @@ On Linux, `pipeline.export` first asks the Flatpak sandbox whether it can read t
 
 Key state: `Params` (user dimensions/tuning) and `Palette` (colors, base_index, merges, streak set) in `params.py`. `Palette.active()` = labels not merged away.
 
-`bambu.PresetDB` reads system presets from `presets_root()` (Windows `%APPDATA%\BambuStudio\system\BBL`; Linux Flatpak or `~/.config`) `{machine,process,filament}/*.json`, resolves `inherits` chains, and filters by `instantiation == "true"` and `compatible_printers`. User presets are not loadable by the CLI, so only system presets are offered.
+`bambu.PresetDB` reads system presets from `presets_root()` (Windows `%APPDATA%\BambuStudio\system\BBL`; Linux Flatpak or `~/.config`) `{machine,process,filament}/*.json`, resolves `inherits` and `include`, and filters by `instantiation == "true"` and `compatible_printers`. The CLI receives resolved copies (`write_flat`). User presets are not offered.
 
 GUI (`gui/main_window.py`, PySide6): long work runs as `gui/worker.Task` (QRunnable on the global QThreadPool); each task carries a `tag` so stale analysis/preview results are discarded. Settings persisted with `QSettings`.
 

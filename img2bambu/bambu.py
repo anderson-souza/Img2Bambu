@@ -12,6 +12,7 @@ FLATPAK_ID = "com.bambulab.BambuStudio"
 FLATPAK_SYSTEM_BIN = "/var/lib/flatpak/exports/bin"
 FLUSH_DEFAULT = "280"
 FLUSH_VECTOR_DEFAULT = "140"
+TEMPLATE_META = ("name", "type", "from", "instantiation", "inherits")
 
 
 def is_linux():
@@ -115,8 +116,19 @@ class PresetDB:
     def filaments(self, machine):
         return self._compatible("filament", machine)
 
-    def path(self, kind, name):
-        return self.raw[kind][name][0]
+    def write_flat(self, kind, name, folder):
+        """Self-contained copy of a preset: the CLI resolves neither `inherits` nor `include`."""
+        missing = self._missing(kind, name)
+        if missing:
+            # why: exporting without them would silently keep another printer's gcode
+            raise RuntimeError(f"Preset “{name}” incompleto: não encontrado {', '.join(sorted(missing))}. "
+                               "Atualize os presets no Bambu Studio.")
+        d = {k: v for k, v in self.resolve(kind, name).items() if k not in ("inherits", "include")}
+        d.update({"name": name, "type": kind, "from": "system", "instantiation": "true"})
+        out = os.path.join(folder, f"{kind}.json")
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump(d, f)
+        return out
 
     def resolve(self, kind, name):
         key = (kind, name)
@@ -124,17 +136,37 @@ class PresetDB:
             self._cache[key] = self._resolve(kind, name)
         return self._cache[key]
 
-    def _resolve(self, kind, name):
-        chain, seen = [], set()
-        while name and name in self.raw[kind] and name not in seen:
-            seen.add(name)
-            d = self.raw[kind][name][1]
-            chain.append(d)
-            name = d.get("inherits")
+    def _parents(self, kind, name):
+        d = self.raw[kind][name][1]
+        return ([d["inherits"]] if d.get("inherits") else []), d.get("include") or []
+
+    def _resolve(self, kind, name, seen=()):
+        if name not in self.raw[kind] or name in seen:
+            return {}
+        seen += (name,)
+        base, includes = self._parents(kind, name)
         merged = {}
-        for d in reversed(chain):
-            merged.update(d)
+        for b in base:
+            merged.update(self._resolve(kind, b, seen))
+        # invariant: inherited < include < own, same as Bambu Studio; printer gcode lives in the includes
+        for i in includes:
+            merged.update({k: v for k, v in self._resolve(kind, i, seen).items() if k not in TEMPLATE_META})
+        merged.update(self.raw[kind][name][1])
         return merged
+
+    def _missing(self, kind, name):
+        todo, seen, missing = [name], set(), set()
+        while todo:
+            n = todo.pop()
+            if n in seen:
+                continue
+            seen.add(n)
+            if n not in self.raw[kind]:
+                missing.add(n)
+                continue
+            base, includes = self._parents(kind, n)
+            todo += base + includes
+        return missing
 
     def defaults(self, machine):
         m = self.resolve("machine", machine)
@@ -174,8 +206,9 @@ def export_project(exe, db, minimal_3mf, out_path, machine, process, filament, c
     raw = os.path.join(work, "cli_export.3mf")
     if os.path.exists(raw):
         os.remove(raw)
-    fpath = db.path("filament", filament)
-    _run(exe, ["--load-settings", f"{db.path('machine', machine)};{db.path('process', process)}",
+    mpath, ppath, fpath = (db.write_flat(k, v, work) for k, v in
+                           (("machine", machine), ("process", process), ("filament", filament)))
+    _run(exe, ["--load-settings", f"{mpath};{ppath}",
                "--load-filaments", ";".join([fpath] * n),
                "--outputdir", work, "--export-3mf", os.path.basename(raw), minimal_3mf])
     if not os.path.isfile(raw):

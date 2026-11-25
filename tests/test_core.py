@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import zipfile
 
 import numpy as np
@@ -150,6 +151,121 @@ def test_minimal_3mf_assigns_extruders(tmp_path):
     assert 'name="Application"' not in model
     for i in (1, 2, 3):
         assert f'<metadata key="extruder" value="{i}"/>' in cfg
+
+
+def preset_db(root, kind, *presets):
+    (root / kind).mkdir(parents=True, exist_ok=True)
+    for i, d in enumerate(presets):
+        (root / kind / f"{i}.json").write_text(json.dumps(d), encoding="utf-8")
+    return bambu.PresetDB(root=str(root))
+
+
+def test_resolve_precedence(tmp_path):
+    db = preset_db(
+        tmp_path, "machine",
+        {"name": "base", "instantiation": "false", "a": "base", "b": "base", "c": "base", "d": "base", "e": "base"},
+        {"name": "t0", "instantiation": "false", "e": "t0", "b": "t0"},
+        {"name": "t1", "instantiation": "false", "c": "t1", "d": "t1"},
+        {"name": "t2", "instantiation": "false", "d": "t2", "b": "t2"},
+        {"name": "mid", "inherits": "base", "include": ["t0"], "a": "mid"},
+        {"name": "M", "inherits": "mid", "include": ["t1", "t2"], "instantiation": "true", "b": "own"})
+    r = db.resolve("machine", "M")
+    assert {k: r[k] for k in "abcde"} == {"a": "mid", "b": "own", "c": "t1", "d": "t2", "e": "t0"}
+    assert r["name"] == "M" and db.machines() == ["M"]
+
+
+def test_resolve_survives_cycles(tmp_path):
+    db = preset_db(tmp_path, "machine", {"name": "A", "inherits": "B", "x": "1"},
+                   {"name": "B", "inherits": "A", "include": ["A"], "y": "2"})
+    assert db.resolve("machine", "A")["y"] == "2"
+    db.write_flat("machine", "A", str(tmp_path))
+
+
+@pytest.mark.parametrize("link", [{"inherits": "gone"}, {"include": ["gone"]}])
+def test_incomplete_preset_is_refused_on_export_only(tmp_path, link):
+    db = preset_db(tmp_path, "machine", {"name": "mid", **link},
+                   {"name": "M", "inherits": "mid", "instantiation": "true", "x": "1"})
+    assert db.machines() == ["M"] and db.resolve("machine", "M")["x"] == "1"
+    with pytest.raises(RuntimeError, match="gone"):
+        db.write_flat("machine", "M", str(tmp_path))
+    assert not (tmp_path / "machine.json").exists()
+
+
+def test_export_passes_self_contained_presets(tmp_path, monkeypatch):
+    for kind in ("machine", "process", "filament"):
+        db = preset_db(tmp_path / "presets", kind, {"name": "base", "inherited": kind},
+                       {"name": "tpl", "type": "other", "instantiation": "false", "included": "ç"},
+                       {"name": kind.upper(), "inherits": "base", "include": ["tpl"], "instantiation": "true"})
+    work = tmp_path / "work"
+    work.mkdir()
+    seen = {}
+
+    def fake_run(exe, args, timeout=900):
+        machine, process = args[args.index("--load-settings") + 1].split(";")
+        filaments = args[args.index("--load-filaments") + 1].split(";")
+        assert len(filaments) == 2 and len(set(filaments)) == 1
+        for p in (machine, process, filaments[0]):
+            with open(p, encoding="utf-8") as f:
+                d = json.load(f)
+            seen[d["type"]] = d
+        _fake_cli_project(str(work / "cli_export.3mf"), 2)
+
+    monkeypatch.setattr(bambu, "_run", fake_run)
+    bambu.export_project("exe", db, "min.3mf", str(tmp_path / "o.3mf"), "MACHINE", "PROCESS", "FILAMENT",
+                         ["#000000", "#FFFFFF"], workdir=str(work))
+    for kind in ("machine", "process", "filament"):
+        assert seen[kind] == {"name": kind.upper(), "type": kind, "from": "system", "instantiation": "true",
+                              "inherited": kind, "included": "ç"}
+
+
+# why: the CLI caps these from its own cli_config.json (cli_safe_acceleration_*)
+CLI_CAPPED = {"machine_max_acceleration_x", "machine_max_acceleration_y", "machine_max_acceleration_travel"}
+# why: AMS drying info has several values per filament and the CLI keeps only one
+CLI_CUT = {"filament_dev_ams_drying_ams_limitations", "filament_dev_ams_drying_heat_distortion_temperature",
+           "filament_dev_ams_drying_temperature", "filament_dev_ams_drying_time",
+           "filament_dev_drying_softening_temperature"}
+PRESET_META = {"name", "from", "inherits", "include", "printer_settings_id", "print_settings_id",
+               "filament_settings_id"}
+
+
+def _norm(v):
+    v = [str(x).replace("%", "") for x in (v if isinstance(v, list) else [v])]
+    out = []
+    for x in v:
+        for part in (x.replace("x", ",").split(",") if len(x) < 20 else [x]):
+            try:
+                out.append(float(part))
+            except ValueError:
+                out.append(part)
+    return out
+
+
+@pytest.mark.slow
+@pytest.mark.skipif(not bambu.find_exe(), reason="needs Bambu Studio")
+def test_project_matches_presets():
+    db, m = bambu.PresetDB(), "Bambu Lab A1 0.4 nozzle"
+    process, filament = db.defaults(m)
+    p = Params(width_mm=60)
+    an = segment.analyze(synthetic(), p)
+    parts = geometry.build_parts(*segment.build_masks(an, an.palette, p), an.palette, p)
+    n = len(parts)
+    work = bambu.work_dir()
+    try:
+        minimal = export3mf.write_minimal_3mf(parts, os.path.join(work, "m.3mf"), "t", db.bed_center(m))
+        out = bambu.export_project(bambu.find_exe(), db, minimal, os.path.join(work, "o.3mf"), m, process, filament,
+                                   ["#000000"] * n, workdir=work)
+        with zipfile.ZipFile(out) as z:
+            d = json.loads(z.read("Metadata/project_settings.config"))
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    # why: a key present in several presets takes the last one's value (e.g. pre_start_fan_time)
+    expected = {**db.resolve("machine", m), **db.resolve("process", process)}
+    expected.update({k: (v * n if isinstance(v, list) else v) for k, v in db.resolve("filament", filament).items()})
+    own = {"filament_colour", "filament_multi_colour"} | CLI_CAPPED | CLI_CUT | PRESET_META
+    diff = {k: (str(v)[:60], str(d[k])[:60]) for k, v in expected.items()
+            if k in d and k not in own and _norm(v) != _norm(d[k])}
+    assert diff == {}
+    assert "machine: A1" in d["machine_start_gcode"] and d["filament_ids"] == ["GFA00"] * n
 
 
 @pytest.mark.slow
