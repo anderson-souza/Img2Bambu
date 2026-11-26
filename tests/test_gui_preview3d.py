@@ -250,7 +250,7 @@ def test_model_updates_while_export_runs(qapp, win, calls, tmp_path, monkeypatch
     def held_export(*a, **k):
         started.set()
         release.wait()
-        return SimpleNamespace(stls=[], project=None, check=None, warnings=[])
+        return SimpleNamespace(stls=[], project=None, check=None, warnings=[], errors=[])
     monkeypatch.setattr(main_window.pipeline, "export", held_export)
     win.settings = QSettings(str(tmp_path / "s.ini"), QSettings.IniFormat)
     win.ed_exe.setText("")

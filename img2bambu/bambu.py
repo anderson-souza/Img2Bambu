@@ -12,6 +12,7 @@ FLATPAK_ID = "com.bambulab.BambuStudio"
 FLATPAK_SYSTEM_BIN = "/var/lib/flatpak/exports/bin"
 FLUSH_DEFAULT = "280"
 FLUSH_VECTOR_DEFAULT = "140"
+TEMPLATE_META = ("name", "type", "from", "instantiation", "inherits")
 
 
 def is_linux():
@@ -74,6 +75,11 @@ def work_dir():
     return tempfile.mkdtemp(prefix="img2bambu_", dir=root)
 
 
+def fits(sz, bed):
+    x0, y0, x1, y1, h = bed
+    return sz[0] <= x1 - x0 and sz[1] <= y1 - y0 and (h is None or sz[2] <= h)
+
+
 class PresetDB:
     """Instantiable system presets of the installed Bambu Studio (user presets are not loadable by CLI)."""
 
@@ -115,8 +121,19 @@ class PresetDB:
     def filaments(self, machine):
         return self._compatible("filament", machine)
 
-    def path(self, kind, name):
-        return self.raw[kind][name][0]
+    def write_flat(self, kind, name, folder):
+        """Self-contained copy of a preset: the CLI resolves neither `inherits` nor `include`."""
+        missing = self._missing(kind, name)
+        if missing:
+            # why: exporting without them would silently keep another printer's gcode
+            raise RuntimeError(f"Preset “{name}” incompleto: não encontrado {', '.join(sorted(missing))}. "
+                               "Atualize os presets no Bambu Studio.")
+        d = {k: v for k, v in self.resolve(kind, name).items() if k not in ("inherits", "include")}
+        d.update({"name": name, "type": kind, "from": "system", "instantiation": "true"})
+        out = os.path.join(folder, f"{kind}.json")
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump(d, f)
+        return out
 
     def resolve(self, kind, name):
         key = (kind, name)
@@ -124,17 +141,37 @@ class PresetDB:
             self._cache[key] = self._resolve(kind, name)
         return self._cache[key]
 
-    def _resolve(self, kind, name):
-        chain, seen = [], set()
-        while name and name in self.raw[kind] and name not in seen:
-            seen.add(name)
-            d = self.raw[kind][name][1]
-            chain.append(d)
-            name = d.get("inherits")
+    def _parents(self, kind, name):
+        d = self.raw[kind][name][1]
+        return ([d["inherits"]] if d.get("inherits") else []), d.get("include") or []
+
+    def _resolve(self, kind, name, seen=()):
+        if name not in self.raw[kind] or name in seen:
+            return {}
+        seen += (name,)
+        base, includes = self._parents(kind, name)
         merged = {}
-        for d in reversed(chain):
-            merged.update(d)
+        for b in base:
+            merged.update(self._resolve(kind, b, seen))
+        # invariant: inherited < include < own, same as Bambu Studio; printer gcode lives in the includes
+        for i in includes:
+            merged.update({k: v for k, v in self._resolve(kind, i, seen).items() if k not in TEMPLATE_META})
+        merged.update(self.raw[kind][name][1])
         return merged
+
+    def _missing(self, kind, name):
+        todo, seen, missing = [name], set(), set()
+        while todo:
+            n = todo.pop()
+            if n in seen:
+                continue
+            seen.add(n)
+            if n not in self.raw[kind]:
+                missing.add(n)
+                continue
+            base, includes = self._parents(kind, n)
+            todo += base + includes
+        return missing
 
     def defaults(self, machine):
         m = self.resolve("machine", machine)
@@ -155,6 +192,13 @@ class PresetDB:
             height = None
         return (*area, height)
 
+    def bed_exclude(self, machine):
+        try:
+            return [tuple(float(v) for v in a.split("x"))
+                    for a in self.resolve("machine", machine).get("bed_exclude_area") or []]
+        except (ValueError, AttributeError):
+            return []
+
     def bed_center(self, machine):
         b = self.bed(machine)
         if b is None:
@@ -168,24 +212,26 @@ def _run(exe, args, timeout=900):
     return subprocess.run([exe] + args, capture_output=True, timeout=timeout, creationflags=flags)
 
 
-def export_project(exe, db, minimal_3mf, out_path, machine, process, filament, colors, workdir=None):
+def export_project(exe, db, minimal_3mf, out_path, machine, process, filament, colors, tower=None,
+                   workdir=None):
     n = len(colors)
     work = workdir or tempfile.mkdtemp(prefix="img2bambu_")
     raw = os.path.join(work, "cli_export.3mf")
     if os.path.exists(raw):
         os.remove(raw)
-    fpath = db.path("filament", filament)
-    _run(exe, ["--load-settings", f"{db.path('machine', machine)};{db.path('process', process)}",
+    mpath, ppath, fpath = (db.write_flat(k, v, work) for k, v in
+                           (("machine", machine), ("process", process), ("filament", filament)))
+    _run(exe, ["--load-settings", f"{mpath};{ppath}",
                "--load-filaments", ";".join([fpath] * n),
                "--outputdir", work, "--export-3mf", os.path.basename(raw), minimal_3mf])
     if not os.path.isfile(raw):
         raise RuntimeError("Bambu Studio CLI não gerou o projeto 3MF.")
     filament_keys = set(db.resolve("filament", filament))
-    patch_project(raw, out_path, colors, filament_keys)
+    patch_project(raw, out_path, colors, filament_keys, tower)
     return out_path
 
 
-def patch_project(src, dst, colors, filament_keys=()):
+def patch_project(src, dst, colors, filament_keys=(), tower=None):
     """CLI export leaves per-filament arrays at length 1; GUI then rejects the config. Expand to N."""
     n = len(colors)
     with zipfile.ZipFile(src) as zin:
@@ -199,6 +245,8 @@ def patch_project(src, dst, colors, filament_keys=()):
         d["filament_colour"] = list(colors)
         if "filament_multi_colour" in d:
             d["filament_multi_colour"] = list(colors)
+        if tower:
+            d["wipe_tower_x"], d["wipe_tower_y"] = [str(tower[0])], [str(tower[1])]
         # invariant: flush matrix is n*n with zero diagonal, vector is 2*n
         d["flush_volumes_matrix"] = ["0" if r == c else FLUSH_DEFAULT for r in range(n) for c in range(n)]
         d["flush_volumes_vector"] = [FLUSH_VECTOR_DEFAULT] * (2 * n)
@@ -216,18 +264,29 @@ def patch_project(src, dst, colors, filament_keys=()):
 def slice_check(exe, project, workdir=None):
     """Slice with the project's embedded config only; returns summary dict."""
     work = workdir or tempfile.mkdtemp(prefix="img2bambu_slice_")
+    # why: when slicing fails, the CLI does not create the folder and the reason in result.json is lost
+    os.makedirs(work, exist_ok=True)
+    out = {"ok": False, "changes": 0, "colours": [], "time": "", "error": "", "warnings": []}
     res_path = os.path.join(work, "result.json")
     for f in (res_path, os.path.join(work, "plate_1.gcode")):
         if os.path.exists(f):
             os.remove(f)
-    _run(exe, ["--slice", "0", "--outputdir", work, project])
-    if not os.path.isfile(res_path):
-        raise RuntimeError("Fatiamento de verificação falhou (sem result.json).")
-    with open(res_path, encoding="utf-8") as f:
-        r = json.load(f)
-    plate = (r.get("sliced_plates") or [{}])[0]
-    out = {"ok": r.get("return_code") == 0, "changes": plate.get("filament_change_times", 0),
-           "colours": [], "time": ""}
+    try:
+        _run(exe, ["--slice", "0", "--outputdir", work, project])
+        with open(res_path, encoding="utf-8") as f:
+            r = json.load(f)
+    except subprocess.TimeoutExpired:
+        out["error"] = "o Bambu Studio demorou demais para fatiar."
+        return out
+    except (OSError, ValueError) as e:
+        out["error"] = f"o Bambu Studio não informou o resultado ({e})."
+        return out
+    plates = r.get("sliced_plates") or []
+    out["ok"] = r.get("return_code") == 0
+    out["changes"] = (plates or [{}])[0].get("filament_change_times", 0)
+    if not out["ok"]:
+        out["error"] = (r.get("error_string") or f"código {r.get('return_code')}").strip()
+    out["warnings"] = [p["warning_message"].strip() for p in plates if p.get("warning_message")]
     gcode = os.path.join(work, "plate_1.gcode")
     if os.path.isfile(gcode):
         with open(gcode, encoding="utf-8", errors="ignore") as f:

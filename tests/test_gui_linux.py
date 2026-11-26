@@ -4,7 +4,7 @@ import pytest
 from test_core import synthetic
 from test_gui_preview3d import calls, presets, settle, win  # noqa: F401 — why: shared fixtures
 
-from img2bambu import bambu
+from img2bambu import bambu, pipeline
 from img2bambu.gui import main_window
 
 
@@ -98,3 +98,12 @@ def test_exe_field_filled_from_detection(qapp, flatpak, monkeypatch, presets):  
     assert w.ed_exe.text() == flatpak and w.cb_machine.count() > 0
     w.close()
     w.deleteLater()
+
+
+def test_gui_shows_problems_without_dialog(qapp, win):  # noqa: F811 — why: shared fixture
+    win.export_done(0, pipeline.Result(stls=[], check={"ok": False, "changes": 0}, errors=["motivo"],
+                                       warnings=["leve"]))
+    log = win.log.toPlainText()
+    assert "⚠ motivo" in log and "⚠ leve" in log and "trocas de filamento" not in log
+    assert "problemas" in win.statusBar().currentMessage()
+    settle(qapp, win)

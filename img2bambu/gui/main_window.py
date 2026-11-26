@@ -832,13 +832,13 @@ class MainWindow(QMainWindow):
             self.last_project = res.project
             self.bt_open.setEnabled(True)
             self.log_msg(f"Projeto: {res.project}")
-        if res.check:
+        if res.check and res.check["ok"]:
             c = res.check
             self.log_msg(f"Verificação: {c.get('changes')} trocas de filamento, "
                          f"cores {', '.join(c.get('colours', []))}, tempo estimado {c.get('time') or '?'}.")
-        for w in res.warnings:
+        for w in res.errors + res.warnings:
             self.log_msg(f"⚠ {w}")
-        self.status("Concluído.")
+        self.status("Concluído com problemas: veja as mensagens." if res.errors else "Concluído.")
 
     def export_failed(self, _tag, msg):
         self.busy_export = False

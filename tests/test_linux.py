@@ -159,7 +159,8 @@ def test_windows_keeps_work_files_and_slices_inside(monkeypatch, tmp_path):
     monkeypatch.setattr(bambu.sys, "platform", "win32")
     monkeypatch.setattr(bambu.tempfile, "tempdir", str(tmp_path))
     monkeypatch.setattr(bambu, "export_project", lambda *a, workdir: dirs.append(workdir))
-    monkeypatch.setattr(bambu, "slice_check", lambda *a, workdir: dirs.append(workdir) or {"changes": 1})
+    monkeypatch.setattr(bambu, "slice_check", lambda *a, workdir: dirs.append(workdir) or
+                        {"ok": True, "changes": 1, "warnings": []})
     p = Params(width_mm=40)
     an = segment.analyze(synthetic(), p)
     choice = pipeline.BambuChoice("bambu-studio.exe", "m", "p", "f", check=True)
