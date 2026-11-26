@@ -2,6 +2,8 @@ import argparse
 import os
 import sys
 
+from PIL import UnidentifiedImageError
+
 from . import bambu, pipeline, segment
 from .params import LIMITS, Params, hex_color
 
@@ -11,13 +13,37 @@ def _choices(key):
     return {"choices": range(lo, hi + 1), "metavar": f"{lo}-{hi}"}
 
 
+def _mm(key):
+    lo, hi = LIMITS[key]
+
+    def parse(text):
+        try:
+            v = float(text)
+        except ValueError:
+            raise argparse.ArgumentTypeError(f"número inválido: {text!r}") from None
+        if not lo <= v <= hi:   # why: also rejects nan
+            raise argparse.ArgumentTypeError(f"{text} fora do intervalo {lo:g}-{hi:g} mm")
+        return v
+    return {"type": parse, "metavar": f"{lo:g}-{hi:g}"}
+
+
+def _message(e, image):
+    if isinstance(e, UnidentifiedImageError):
+        return f"arquivo não é uma imagem reconhecida: {image}"
+    if isinstance(e, FileNotFoundError):
+        return f"arquivo não encontrado: {e.filename or image}"
+    if isinstance(e, OSError):
+        return f"falha ao acessar {e.filename or image}: {e.strerror or e}"
+    return str(e)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="img2bambu", description="Imagem -> projeto 3MF multicor Bambu Studio")
     ap.add_argument("image")
     ap.add_argument("--out", default=None)
-    ap.add_argument("--width", type=float, default=150.0)
-    ap.add_argument("--base", type=float, default=10.0)
-    ap.add_argument("--relief", type=float, default=1.0)
+    ap.add_argument("--width", default=150.0, **_mm("width_mm"))
+    ap.add_argument("--base", default=10.0, **_mm("base_mm"))
+    ap.add_argument("--relief", default=1.0, **_mm("relief_mm"))
     ap.add_argument("--colors", type=int, default=3, **_choices("n_colors"))
     ap.add_argument("--smooth", type=int, default=0, **_choices("smooth"),
                     help="suavização (mean-shift) antes de detectar as cores; 0 = desligado")
@@ -32,7 +58,11 @@ def main(argv=None):
 
     params = Params(width_mm=a.width, base_mm=a.base, relief_mm=a.relief, n_colors=a.colors, smooth=a.smooth,
                     filaments=a.filaments)
-    an = segment.analyze(a.image, params)
+    try:
+        an = segment.analyze(a.image, params)
+    except (OSError, ValueError) as e:   # why: UnidentifiedImageError is an OSError
+        print("Erro:", _message(e, a.image), file=sys.stderr)
+        return 1
     if an.note:
         print(an.note)
     pal = an.palette
@@ -63,8 +93,8 @@ def main(argv=None):
     try:
         res = pipeline.export(an, an.palette, params, outdir, name, choice, db,
                               progress=lambda p, m: print(f"[{p:3d}%] {m}"))
-    except RuntimeError as e:
-        print("Erro:", e, file=sys.stderr)
+    except (RuntimeError, OSError, ValueError) as e:
+        print("Erro:", _message(e, a.image), file=sys.stderr)
         return 1
     for s in res.stls:
         print("STL:", s)
