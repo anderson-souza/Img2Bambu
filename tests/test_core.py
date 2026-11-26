@@ -596,6 +596,58 @@ def test_cli_smooth_out_of_range_exits_2(monkeypatch, capsys, bad):
     assert "--smooth" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("flag,bad", [("--width", "0"), ("--width", "-5"), ("--width", "501"), ("--width", "nan"),
+                                      ("--width", "x"), ("--base", "0"), ("--relief", "0.01")])
+def test_cli_mm_out_of_range_exits_2(monkeypatch, capsys, flag, bad):
+    from img2bambu import __main__ as cli
+    called = []
+    monkeypatch.setattr(cli.segment, "analyze", lambda *a: called.append(a))
+    with pytest.raises(SystemExit) as e:
+        cli.main(["missing.png", "--stl-only", flag, bad])
+    assert e.value.code == 2 and called == []
+    assert flag in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("flag,value", [("--width", "10"), ("--base", "50"), ("--relief", "0.2")])
+def test_cli_mm_limits_are_accepted(monkeypatch, tmp_path, flag, value):
+    seen = []
+    monkeypatch.setattr(pipeline, "export", lambda an, pal, p, *a, **k: seen.append(p) or pipeline.Result([]))
+    _cli(monkeypatch, tmp_path, flag, value)
+    attr = {"--width": "width_mm", "--base": "base_mm", "--relief": "relief_mm"}[flag]
+    assert getattr(seen[0], attr) == float(value)
+
+
+def _bad_input(tmp_path, kind):
+    from PIL import Image
+    path = tmp_path / "in.png"
+    if kind == "text":
+        path.write_text("not an image")
+    elif kind == "empty":
+        Image.fromarray(np.zeros((20, 20, 4), np.uint8)).save(path)
+    return path
+
+
+@pytest.mark.parametrize("kind,msg", [("missing", "não encontrado"), ("text", "não é uma imagem"),
+                                      ("empty", "Nenhum pixel do objeto")])
+def test_cli_bad_image_fails_without_traceback(tmp_path, capsys, kind, msg):
+    from img2bambu import __main__ as cli
+    path = _bad_input(tmp_path, kind)
+    assert cli.main([str(path), "--stl-only", "--out", str(tmp_path / "out")]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("Erro:") and msg in err and "Traceback" not in err
+
+
+def test_cli_export_os_error_fails_without_traceback(monkeypatch, tmp_path, capsys):
+    def denied(*a, **k):
+        raise PermissionError(13, "Permission denied", str(tmp_path / "out"))
+    monkeypatch.setattr(pipeline, "export", denied)
+    from img2bambu import __main__ as cli
+    img = tmp_path / "g.png"
+    from PIL import Image
+    Image.fromarray(synthetic()).save(img)
+    assert cli.main([str(img), "--stl-only", "--out", str(tmp_path / "out")]) == 1
+    assert capsys.readouterr().err.startswith(f"Erro: falha ao acessar {tmp_path / 'out'}")
+
 def stripes(tones):
     """1000x50 horizontal stripes on a transparent border; tones = [(L, a, b) real LAB, share %], dark -> light."""
     rows = []
