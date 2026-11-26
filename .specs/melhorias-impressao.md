@@ -9,9 +9,9 @@ Estados: `aberto` → `refinado` (pontos decididos) → `feito` (link do PR). Ao
 
 | # | Item | Prioridade | Evidência | Estado |
 |---|---|---|---|---|
-| 1 | Presets completos no 3MF | P0 | medido | refinado (implementado, sem PR; falta UAT na GUI) |
-| 2 | Posição da prime tower | P0 | medido | refinado (implementado, sem PR) |
-| 3 | `--check` que não esconde falhas | P0 | medido + código | refinado (implementado, sem PR) |
+| 1 | Presets completos no 3MF | P0 | medido | feito ([#17](https://github.com/anderson-souza/Img2Bambu/pull/17)) |
+| 2 | Posição da prime tower | P0 | medido | feito ([#17](https://github.com/anderson-souza/Img2Bambu/pull/17)) |
+| 3 | `--check` que não esconde falhas | P0 | medido + código | feito ([#17](https://github.com/anderson-souza/Img2Bambu/pull/17)) |
 | 4 | Alturas múltiplas da camada | P1 | medido | aberto |
 | 5 | Conferência pelo gcode | P1 | proposta | aberto |
 | 6 | Limites pelo bico real | P1 | código | aberto |
